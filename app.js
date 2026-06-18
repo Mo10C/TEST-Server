@@ -6,6 +6,31 @@
 
 const {useState,useEffect,useRef,useMemo,useCallback}=React;
 
+// 🌟 ============ キーボードショートカット（キー割り当て） ============
+//   設定画面で変更でき、localStorage に保存される。
+const DEFAULT_KEYBINDINGS = { buyXp: 'f', reroll: 'd', sell: 'e' };
+const ACTION_LABELS = { buyXp: '経験値購入', reroll: 'リロール', sell: '駒の売却' };
+const ACTION_ORDER = ['buyXp', 'reroll', 'sell'];
+const KEYBIND_STORAGE_KEY = 'tft_set17_keybindings_v1';
+
+function loadKeyBindings() {
+  try {
+    const raw = localStorage.getItem(KEYBIND_STORAGE_KEY);
+    if (raw) return { ...DEFAULT_KEYBINDINGS, ...JSON.parse(raw) };
+  } catch (e) { /* file:// 等で使えない場合は既定値 */ }
+  return { ...DEFAULT_KEYBINDINGS };
+}
+function saveKeyBindings(kb) {
+  try { localStorage.setItem(KEYBIND_STORAGE_KEY, JSON.stringify(kb)); } catch (e) {}
+}
+// キーの表示用整形（' '→Space, 'arrowup'→↑ など）
+function fmtKey(k) {
+  if (!k) return '—';
+  const map = { ' ': 'Space', space: 'Space', arrowup: '↑', arrowdown: '↓', arrowleft: '←', arrowright: '→', escape: 'Esc', enter: 'Enter' };
+  if (map[k]) return map[k];
+  return k.length === 1 ? k.toUpperCase() : k.charAt(0).toUpperCase() + k.slice(1);
+}
+
 
 const COST_COLORS={1:'#8a9aaa',2:'#44cc66',3:'#3399ff',4:'#cc44ff',5:'#ffcc44'};
 const STAR_COLORS={1:'#8a9aaa',2:'#44ccff',3:'#ffcc44'};
@@ -908,6 +933,82 @@ const AugmentScreen = ({ onPick, rng, augmentTierBoost = 0, isNoMoreAugments = f
 
 /* ── メインアプリ ── */
 /* ── メインアプリ ── */
+function SettingsScreen({ bindings, onChange, onBack }) {
+  const [local, setLocal] = useState(bindings);
+  const [listening, setListening] = useState(null); // 入力待ち中のアクションID
+  const [note, setNote] = useState('');
+
+  // 入力待ち中：次に押されたキーを割り当てる
+  useEffect(() => {
+    if (!listening) return;
+    const onKey = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      let k = e.key;
+      if (k === 'Escape') { setListening(null); setNote(''); return; }
+      if (k === ' ') k = 'space'; else k = k.toLowerCase();
+      // 修飾キー単体は割り当て不可
+      if (['shift','control','alt','meta','capslock','tab','contextmenu','dead'].includes(k)) {
+        setNote('そのキーは割り当てできません'); return;
+      }
+      // 他のアクションと重複していたら拒否
+      const dup = ACTION_ORDER.find(id => id !== listening && local[id] === k);
+      if (dup) { setNote(`「${ACTION_LABELS[dup]}」と重複しています`); return; }
+      const next = { ...local, [listening]: k };
+      setLocal(next); onChange(next); setListening(null); setNote('');
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [listening, local, onChange]);
+
+  const resetDefault = () => { setLocal({ ...DEFAULT_KEYBINDINGS }); onChange({ ...DEFAULT_KEYBINDINGS }); setNote(''); setListening(null); };
+
+  const rowStyle = { display:'flex', alignItems:'center', justifyContent:'space-between', gap:16, padding:'14px 18px', background:'rgba(15,23,42,0.55)', border:'1px solid var(--border)', borderRadius:10 };
+
+  return (
+    <div style={{ height:'100vh', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:24, backgroundImage:`linear-gradient(rgba(0,0,0,0.72), rgba(0,0,0,0.72)), url("https://assets.st-note.com/production/uploads/images/263587712/rectangle_large_type_2_386d7257054746a6649e14bdb1432725.jpeg?width=4000&height=4000&fit=bounds&format=jpg&quality=90")`, backgroundSize:'cover', backgroundPosition:'center', padding:20, animation:'fadeIn 0.6s ease' }}>
+      <div style={{ fontFamily:'Orbitron', fontSize:'clamp(22px,5vw,40px)', fontWeight:900, color:'#fff', letterSpacing:6, textShadow:'0 0 10px rgba(0,0,0,0.9), 0 0 20px var(--gold)' }}>
+        ⚙️ 設定
+      </div>
+      <div style={{ width:'min(440px, 92vw)', background:'rgba(8,16,26,0.78)', border:'1px solid var(--border)', borderRadius:16, padding:24, boxShadow:'0 20px 60px rgba(0,0,0,0.6)' }}>
+        <div style={{ color:'var(--text-inv)', fontWeight:900, fontSize:15, marginBottom:6 }}>キー割り当て</div>
+        <div style={{ color:'rgba(255,255,255,0.6)', fontSize:12, marginBottom:18 }}>
+          ゲーム中、カーソルを駒に乗せて売却キーを押すと売却できます。
+        </div>
+        <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+          {ACTION_ORDER.map(id => (
+            <div key={id} style={rowStyle}>
+              <span style={{ color:'#fff', fontWeight:700, fontSize:14 }}>{ACTION_LABELS[id]}</span>
+              <button
+                onClick={() => { setListening(id); setNote('割り当てたいキーを押してください（Escでキャンセル）'); }}
+                style={{
+                  minWidth:88, height:40, borderRadius:8, cursor:'pointer', fontFamily:'Orbitron', fontWeight:700, fontSize:15,
+                  color: listening===id ? '#08101a' : '#fff',
+                  background: listening===id ? 'var(--gold2)' : 'rgba(255,255,255,0.06)',
+                  border: `2px solid ${listening===id ? 'var(--gold2)' : 'var(--blue)'}`,
+                  boxShadow: listening===id ? '0 0 16px var(--gold)' : 'none',
+                  transition:'all 0.15s'
+                }}
+              >
+                {listening===id ? '入力待ち…' : fmtKey(local[id])}
+              </button>
+            </div>
+          ))}
+        </div>
+        <div style={{ minHeight:20, marginTop:12, color:'var(--gold2)', fontSize:12, textAlign:'center' }}>{note}</div>
+        <div style={{ display:'flex', gap:12, marginTop:10 }}>
+          <button className="menu-btn" style={{ flex:1, background:'rgba(15,23,42,0.8)', color:'#fff', borderColor:'var(--border)' }} onClick={resetDefault}>
+            デフォルトに戻す
+          </button>
+          <button className="menu-btn" style={{ flex:1, background:'var(--blue)', color:'#fff', borderColor:'var(--blue)' }} onClick={onBack}>
+            メニューに戻る
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Main() {
   // 🌟 URLからシード値を取得する処理
   const initialSeed = useMemo(() => {
@@ -919,6 +1020,7 @@ function Main() {
   const [view, setView] = useState(initialSeed ? 'GAME' : 'MENU');
   const [seed, setSeed] = useState(initialSeed ? initialSeed.toUpperCase() : "");
   const [gameKey, setGameKey] = useState(0);
+  const [keyBindings, setKeyBindings] = useState(loadKeyBindings); // 🌟 キー割り当て
 
   const startWithSeed = (targetSeed) => {
     const newSeed = targetSeed || Math.random().toString(36).substring(2, 9).toUpperCase();
@@ -970,14 +1072,34 @@ function Main() {
           >
             使い方
           </button>
+          <button 
+            className="menu-btn" 
+            style={{ width:220, background:'rgba(15,23,42,0.8)', color:'white', borderColor:'var(--border)', boxShadow:'0 10px 30px rgba(0,0,0,0.5)', transition:'all 0.2s ease', cursor:'pointer' }} 
+            onClick={() => setView('SETTINGS')}
+            onMouseEnter={e => { e.currentTarget.style.transform = 'scale(1.05)'; e.currentTarget.style.background = 'rgba(30,45,74,0.9)'; }}
+            onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.background = 'rgba(15,23,42,0.8)'; }}
+          >
+            ⚙️ 設定
+          </button>
         </div>
       </div>
     );
   }
-  return <App key={gameKey} seed={seed} onRestart={() => startWithSeed(seed)} onNewGame={() => startWithSeed()} />;
+
+  if (view === 'SETTINGS') {
+    return (
+      <SettingsScreen
+        bindings={keyBindings}
+        onChange={(kb) => { setKeyBindings(kb); saveKeyBindings(kb); }}
+        onBack={() => setView('MENU')}
+      />
+    );
+  }
+
+  return <App key={gameKey} seed={seed} keyBindings={keyBindings} onRestart={() => startWithSeed(seed)} onNewGame={() => startWithSeed()} />;
 }
 
-function App({ seed, onRestart, onNewGame }) {
+function App({ seed, onRestart, onNewGame, keyBindings = DEFAULT_KEYBINDINGS }) {
   // 🌟 RNG（乱数生成器）をジャンルごとに独立させ、他の行動によるズレを防止！
   const rngSys = useMemo(() => createRNG(seed + "_sys"), [seed]);
   const rngShop = useMemo(() => createRNG(seed + "_shop"), [seed]);
@@ -1050,6 +1172,85 @@ function App({ seed, onRestart, onNewGame }) {
   const [introStep, setIntroStep] = useState(0);
   const [auraTrainingUnit, setAuraTrainingUnit] = useState(null); // 🌟 オーラ育成中 専用の待機枠
   const [phase, setPhase] = useState('main'); // 🌟 追加: 'main' | 'drop'
+
+  // 🌟 ============ キーボードショートカット ============
+  const hoveredUnitRef = useRef(null);   // カーソル下の駒 { type:'bench'|'board', idx }
+  const actionsRef = useRef({});         // 常に最新の処理を保持
+  const keyBindingsRef = useRef(keyBindings);
+  keyBindingsRef.current = keyBindings || DEFAULT_KEYBINDINGS;
+  const isFinishedRef = useRef(false);
+  isFinishedRef.current = isFinished;
+  const phaseRef = useRef('main');
+  phaseRef.current = phase;
+
+  // 経験値購入（XP）
+  const doBuyXp = () => {
+    if (passiveBuffs.some(b => b.type === 'wise_spending')) return;
+    const cost = Math.max(1, 4 - xpCostReduction);
+    if (gold >= cost) {
+      setGold(g => g - cost);
+      const extraXp = passiveBuffs.some(b => b.type === 'level_up_aug') ? 2 : 0;
+      const { level: nl, xp: nx } = applyXp(4 + extraXp, level, xp);
+      setLevel(nl); setXp(nx);
+    }
+  };
+  // リロール
+  const doReroll = () => {
+    if (freeRerolls > 0) { setFreeRerolls(fr => fr - 1); setShop(rollShop(level, rngShop)); return; }
+    if (gold >= 2) {
+      setGold(g => g - 2); setShop(rollShop(level, rngShop));
+      if (passiveBuffs.some(b => b.type === 'prism_ticket') && rngShop() < 0.5) setFreeRerolls(fr => fr + 1);
+      if (passiveBuffs.some(b => b.type === 'wise_spending')) {
+        const { level: nl, xp: nx } = applyXp(2, level, xp);
+        setLevel(nl); setXp(nx);
+      }
+    }
+  };
+  // カーソル下の駒を売却
+  const doSellHovered = () => {
+    if (phaseRef.current === 'drop') return; // 素材ドロップ中は無効
+    const h = hoveredUnitRef.current;
+    if (!h) return;
+    const arr = h.type === 'bench' ? bench : board;
+    const mover = arr[h.idx];
+    if (!mover) return;
+    if (mover.isAnvil) {
+      handleSellAnvil(mover);
+    } else {
+      setGold(g => g + (mover.cost * (mover.star === 3 ? 9 : (mover.star === 2 ? 3 : 1))));
+      const itemsToReturn = (mover.items || []).filter(it => !it.isTGGenerated && !it.isPsionic);
+      if (itemsToReturn.length) setInventory(p => [...p, ...itemsToReturn]);
+    }
+    const setter = h.type === 'bench' ? setBench : setBoard;
+    setter(prev => { const na = [...prev]; na[h.idx] = null; return na; });
+    hoveredUnitRef.current = null;
+    if (typeof handleMouseLeave === 'function') handleMouseLeave();
+  };
+  actionsRef.current = { buyXp: doBuyXp, reroll: doReroll, sell: doSellHovered };
+
+  // keydown リスナー（マウント時に1回だけ登録。中身は ref 経由で常に最新）
+  useEffect(() => {
+    const onKey = (e) => {
+      if (isFinishedRef.current) return;
+      const el = e.target;
+      const tag = (el && el.tagName) || '';
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || (el && el.isContentEditable)) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const kb = keyBindingsRef.current || DEFAULT_KEYBINDINGS;
+      const key = (e.key === ' ' ? 'space' : e.key).toLowerCase();
+      let act = null;
+      if (key === (kb.buyXp || '').toLowerCase()) act = 'buyXp';
+      else if (key === (kb.reroll || '').toLowerCase()) act = 'reroll';
+      else if (key === (kb.sell || '').toLowerCase()) act = 'sell';
+      if (!act) return;
+      e.preventDefault();
+      const fn = actionsRef.current[act];
+      if (fn) fn();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+  // 🌟 ============ ここまで ============
 
   // 🌟 タッチドラッグ＆ピンチズーム用
   const [boardZoom, setBoardZoom] = useState(1.0);
@@ -2429,11 +2630,18 @@ const handleAugmentPick = (aug, historyContext) => {
   const handleMouseEnter = (e, champ) => {
     if (!champ) return;
     handleMouseLeave();
+    // 🌟 カーソル下の駒（bench/board と index）を記録 → 売却ホットキー用
+    const cell = e.currentTarget && e.currentTarget.closest ? e.currentTarget.closest('[data-drop-type]') : null;
+    if (cell) {
+      const t = cell.getAttribute('data-drop-type');
+      const i = parseInt(cell.getAttribute('data-drop-idx'), 10);
+      if ((t === 'bench' || t === 'board') && !isNaN(i) && i >= 0) hoveredUnitRef.current = { type: t, idx: i };
+    }
     const rect = e.currentTarget.getBoundingClientRect();
     const isRight = rect.left > window.innerWidth / 2;
     hoverTimer.current = setTimeout(() => { setTooltipData({ champ, x: rect.left, y: rect.top, isRight }); }, 1000);
   };
-  const handleMouseLeave = () => { if (hoverTimer.current) { clearTimeout(hoverTimer.current); hoverTimer.current = null; } setTooltipData(null); };
+  const handleMouseLeave = () => { if (hoverTimer.current) { clearTimeout(hoverTimer.current); hoverTimer.current = null; } setTooltipData(null); hoveredUnitRef.current = null; };
   const handleTraitMouseEnter = (e, trait, count) => { const rect = e.currentTarget.getBoundingClientRect(); setTraitTooltipData({ trait, count, x: rect.left, y: rect.top }); };
 
 
@@ -3579,42 +3787,29 @@ const handleAugmentPick = (aug, historyContext) => {
                   {/* XP購入ボタン */}
                   <button
                     disabled={passiveBuffs.some(b => b.type === 'wise_spending')}
-                    onClick={() => {
-                      if (passiveBuffs.some(b => b.type === 'wise_spending')) return;
-                      const cost = xpCost;
-                      if (gold >= cost) {
-                        setGold(g => g - cost);
-                        const extraXp = passiveBuffs.some(b => b.type === 'level_up_aug') ? 2 : 0;
-                        const { level: nl, xp: nx } = applyXp(4 + extraXp, level, xp);
-                        setLevel(nl); setXp(nx);
-                      }
-                    }}
+                    onClick={doBuyXp}
                     style={{ height:38, background:passiveBuffs.some(b => b.type === 'wise_spending') ? 'rgba(30,45,74,.4)' : 'var(--blue)', border:`1px solid ${passiveBuffs.some(b => b.type === 'wise_spending') ? 'var(--border)' : 'var(--blue)'}`, borderRadius:4, display:'flex', alignItems:'center', justifyContent:'space-between', padding:'0 10px', cursor:passiveBuffs.some(b => b.type === 'wise_spending') ? 'not-allowed' : 'pointer', color:passiveBuffs.some(b => b.type === 'wise_spending') ? 'rgba(255,255,255,0.3)' : 'var(--text-inv)' }}>
                     <div style={{ display:'flex', flexDirection:'column', alignItems:'flex-start', fontFamily:'Noto Sans JP' }}>
                       <span style={{ fontSize:13, fontWeight:700, lineHeight:1.2 }}>XP購入</span>
                       <span style={{ fontSize:11, color:'white', fontFamily:'Orbitron' }}>💰 {xpCost}</span>
                     </div>
-                    <div style={{ fontSize: 16 }}>⬆️</div>
+                    <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:2 }}>
+                      <div style={{ fontSize: 16 }}>⬆️</div>
+                      <span style={{ fontSize:9, fontWeight:900, fontFamily:'Orbitron', padding:'0 4px', borderRadius:3, background:'rgba(0,0,0,0.35)', border:'1px solid rgba(255,255,255,0.35)', lineHeight:'13px', minWidth:13, textAlign:'center' }}>{fmtKey(keyBindings.buyXp)}</span>
+                    </div>
                   </button>
                   {/* リロールボタン */}
                   <button
-                    onClick={() => {
-                      if (freeRerolls > 0) { setFreeRerolls(fr => fr - 1); setShop(rollShop(level, rngShop)); return; }
-                      if (gold >= 2) {
-                        setGold(g => g - 2); setShop(rollShop(level, rngShop));
-                        if (passiveBuffs.some(b => b.type === 'prism_ticket') && rngShop() < 0.5) setFreeRerolls(fr => fr + 1);
-                        if (passiveBuffs.some(b => b.type === 'wise_spending')) {
-                          const { level: nl, xp: nx } = applyXp(2, level, xp);
-                          setLevel(nl); setXp(nx);
-                        }
-                      }
-                    }}
+                    onClick={doReroll}
                     style={{ height:38, background:'var(--gold)', border:`1px solid ${freeRerolls>0?'var(--teal)':'var(--gold)'}`, borderRadius:4, display:'flex', alignItems:'center', justifyContent:'space-between', padding:'0 10px', cursor:'pointer', color:'var(--text-inv)' }}>
                     <div style={{ display:'flex', flexDirection:'column', alignItems:'flex-start', fontFamily:'Noto Sans JP' }}>
                       <span style={{ fontSize:13, fontWeight:700, lineHeight:1.2 }}>リロール</span>
                       <span style={{ fontSize:11, color:freeRerolls>0?'var(--teal)':'white', fontFamily:'Orbitron' }}>{freeRerolls > 0 ? `🎲 無料(${freeRerolls})` : '💰 2'}</span>
                     </div>
-                    <div style={{ fontSize: 16 }}>🔄</div>
+                    <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:2 }}>
+                      <div style={{ fontSize: 16 }}>🔄</div>
+                      <span style={{ fontSize:9, fontWeight:900, fontFamily:'Orbitron', padding:'0 4px', borderRadius:3, background:'rgba(0,0,0,0.35)', border:'1px solid rgba(255,255,255,0.35)', lineHeight:'13px', minWidth:13, textAlign:'center' }}>{fmtKey(keyBindings.reroll)}</span>
+                    </div>
                   </button>
                 </div>
 
