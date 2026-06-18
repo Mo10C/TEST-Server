@@ -75,13 +75,14 @@ function stargazerShort(v) {
   return m ? m.split('\n')[0].trim() : '';
 }
 
-// 🌟 遭遇id → チャンピオン画像キー（boardIcon 用）。CDNに無い場合は絵文字へフォールバック。
-const ENC_IMG = {
-  viktor:'Viktor', miipsy:'Miipsy', lissandra:'Lissandra', poppy:'Poppy', twistedfate:'TwistedFate',
-  missfortune:'MissFortune', fiora:'Fiora', sona:'Sona', zoe:'Zoe', graves:'Graves', shen:'Shen',
-  talon:'Talon', velkoz:'Velkoz', tahmkench:'TahmKench', none:null, rastt:'Rastt', ezreal:'Ezreal',
-  ornn:'Ornn', morgana:'Morgana'
-};
+// 🌟 遭遇 → チャンピオン画像キー（boardIcon 用）。結果画面と同じ堅牢なルックアップ。無ければ null（絵文字へフォールバック）。
+function encChampImg(enc) {
+  if (!enc || typeof CHAMPS === 'undefined') return null;
+  let c = CHAMPS.find(x => x.id === enc.id);
+  if (!c) { const map = { miipsy:'meepsie', velkoz:'belveth', rastt:'rhaast' }; if (map[enc.id]) c = CHAMPS.find(x => x.id === map[enc.id]); }
+  if (!c) c = CHAMPS.find(x => x.jaName && enc.champ && x.jaName.replace(/[・=]/g,'') === enc.champ.replace(/[・=]/g,''));
+  return c ? c.img : null;
+}
 
 
 const COST_COLORS={1:'#8a9aaa',2:'#44cc66',3:'#3399ff',4:'#cc44ff',5:'#ffcc44'};
@@ -985,7 +986,7 @@ const AugmentScreen = ({ onPick, rng, augmentTierBoost = 0, isNoMoreAugments = f
 
 /* ── メインアプリ ── */
 /* ── メインアプリ ── */
-function SettingsScreen({ bindings, onChange, overrides = DEFAULT_OVERRIDES, onChangeOverrides = () => {}, onBack }) {
+function SettingsScreen({ bindings, onChange, overrides = DEFAULT_OVERRIDES, onChangeOverrides = () => {}, onBack, onStartNewGame = null, backLabel = 'メニューに戻る' }) {
   const [local, setLocal] = useState(bindings);
   const [listening, setListening] = useState(null); // 入力待ち中のアクションID
   const [note, setNote] = useState('');
@@ -1147,7 +1148,7 @@ function SettingsScreen({ bindings, onChange, overrides = DEFAULT_OVERRIDES, onC
             {encList.map(e => {
               const active = ov.encounter === e.id;
               const disabled = encDisabled(e);
-              const imgKey = ENC_IMG[e.id];
+              const imgKey = encChampImg(e);
               return (
                 <div key={e.id} onClick={() => { if (!disabled) pickEncounter(e.id); }}
                   style={{ display:'flex', alignItems:'center', gap:8, padding:8, borderRadius:10, cursor: disabled?'not-allowed':'pointer', opacity: disabled?0.4:1,
@@ -1235,9 +1236,16 @@ function SettingsScreen({ bindings, onChange, overrides = DEFAULT_OVERRIDES, onC
           ゲーム内設定をすべてランダムに戻す
         </button>
 
+        {/* 結果画面などから開いた場合：この設定で新しいゲームを開始 */}
+        {onStartNewGame && (
+          <button className="menu-btn" style={{ width:'100%', marginTop:18, background:'var(--teal)', color:'#fff', borderColor:'var(--teal)', fontWeight:900 }} onClick={onStartNewGame}>
+            ▶ この設定で新しいゲームを開始
+          </button>
+        )}
+
         {/* 戻る */}
-        <button className="menu-btn" style={{ width:'100%', marginTop:18, background:'var(--blue)', color:'#fff', borderColor:'var(--blue)' }} onClick={onBack}>
-          メニューに戻る
+        <button className="menu-btn" style={{ width:'100%', marginTop: onStartNewGame ? 10 : 18, background:'var(--blue)', color:'#fff', borderColor:'var(--blue)' }} onClick={onBack}>
+          {backLabel}
         </button>
       </div>
     </div>
@@ -1334,10 +1342,13 @@ function Main() {
     );
   }
 
-  return <App key={gameKey} seed={seed} keyBindings={keyBindings} gameOverrides={gameOverrides} onRestart={() => startWithSeed(seed)} onNewGame={() => startWithSeed()} />;
+  return <App key={gameKey} seed={seed} keyBindings={keyBindings} gameOverrides={gameOverrides}
+    onChangeKeyBindings={(kb) => { setKeyBindings(kb); saveKeyBindings(kb); }}
+    onChangeOverrides={(ov) => { setGameOverrides(ov); saveOverrides(ov); }}
+    onRestart={() => startWithSeed(seed)} onNewGame={() => startWithSeed()} />;
 }
 
-function App({ seed, onRestart, onNewGame, keyBindings = DEFAULT_KEYBINDINGS, gameOverrides = DEFAULT_OVERRIDES }) {
+function App({ seed, onRestart, onNewGame, keyBindings = DEFAULT_KEYBINDINGS, gameOverrides = DEFAULT_OVERRIDES, onChangeKeyBindings = () => {}, onChangeOverrides = () => {} }) {
   // 🌟 RNG（乱数生成器）をジャンルごとに独立させ、他の行動によるズレを防止！
   const rngSys = useMemo(() => createRNG(seed + "_sys"), [seed]);
   const rngShop = useMemo(() => createRNG(seed + "_shop"), [seed]);
@@ -1431,6 +1442,7 @@ function App({ seed, onRestart, onNewGame, keyBindings = DEFAULT_KEYBINDINGS, ga
   const [droppedComps, setDroppedComps] = useState([]);
   const [showAssetDrawer, setShowAssetDrawer] = useState(false);
   const [showTierList, setShowTierList] = useState(false);
+  const [showSettings, setShowSettings] = useState(false); // 🌟 結果画面からの設定オーバーレイ
   const hoverTimer = useRef(null);
   const [pendingUnits, setPendingUnits] = useState([]);
   const [introStep, setIntroStep] = useState(0);
@@ -2958,11 +2970,27 @@ const handleAugmentPick = (aug, historyContext) => {
   if (isFinished) {
     return (
       <div style={{height:'100vh',width:'100vw',background:'var(--bg0)',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:20,animation:'fadeIn 0.8s ease',padding:20,overflowY:'auto'}}>
+
+        {/* 🌟 結果画面からの設定オーバーレイ（設定変更 → 新しいゲーム開始） */}
+        {showSettings && (
+          <div style={{ position:'fixed', inset:0, zIndex:9999 }}>
+            <SettingsScreen
+              bindings={keyBindings}
+              onChange={onChangeKeyBindings}
+              overrides={gameOverrides}
+              onChangeOverrides={onChangeOverrides}
+              onBack={() => setShowSettings(false)}
+              backLabel="結果に戻る"
+              onStartNewGame={() => { setShowSettings(false); onNewGame(); }}
+            />
+          </div>
+        )}
         
         {/* 🌟 1. ボタン類を上部に集約！シード値コピーもここへ移動 */}
         <div style={{display:'flex', gap:12, marginBottom:5}}>
           <button className="menu-btn" onClick={onRestart} style={{padding:'10px 20px',fontSize:13, background:'var(--blue)', color:'white', borderColor:'var(--blue)'}}>同じシードで再挑戦</button>
           <button className="menu-btn" onClick={onNewGame} style={{padding:'10px 20px',fontSize:13, background:'var(--teal)', color:'white', borderColor:'var(--teal)'}}>新しいゲーム</button>
+          <button className="menu-btn" onClick={() => setShowSettings(true)} style={{padding:'10px 20px',fontSize:13, background:'rgba(15,23,42,0.85)', color:'white', borderColor:'var(--border)'}}>⚙️ 設定</button>
 <button 
   className="menu-btn" 
   onClick={() => {
