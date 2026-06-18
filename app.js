@@ -31,6 +31,50 @@ function fmtKey(k) {
   return k.length === 1 ? k.toUpperCase() : k.charAt(0).toUpperCase() + k.slice(1);
 }
 
+// 🌟 ============ ゲーム内設定（手動セットアップのオーバーライド） ============
+//   null = ランダム（従来通り）。設定すると固定される。localStorage に保存。
+const DEFAULT_OVERRIDES = {
+  gods: null,         // [godId, godId]（1体目が発動する神。順序＝選択順）
+  encounter: null,    // ENCOUNTERS の id
+  stargazer: null,    // stargazerVariants の index
+  psionic: null,      // [name(初手), name(2手目)]
+  augmentTier: null,  // 'silver' | 'gold' | 'prismatic'
+  dropPlanIndex: null // DROP_PLANS の index
+};
+const OVERRIDE_STORAGE_KEY = 'tft_set17_overrides_v1';
+function loadOverrides() {
+  try {
+    const raw = localStorage.getItem(OVERRIDE_STORAGE_KEY);
+    if (raw) return { ...DEFAULT_OVERRIDES, ...JSON.parse(raw) };
+  } catch (e) {}
+  return { ...DEFAULT_OVERRIDES };
+}
+function saveOverrides(o) {
+  try { localStorage.setItem(OVERRIDE_STORAGE_KEY, JSON.stringify(o)); } catch (e) {}
+}
+
+// 🌟 アイテムドロップテーブル（dropPlan の素材/灰/青オーブ配分。BASE5種＋HIGH5種）
+//    executeOrbDrop 側の閾値と一致させてある。
+const DROP_PLANS = [
+  { label: '素材3 / 灰3 / 青0',        plan: { comp: 3, gray: 3, blue: 0 } },
+  { label: '素材3 / 灰0 / 青1',        plan: { comp: 3, gray: 0, blue: 1 } },
+  { label: '素材2 / 灰1 / 青1',        plan: { comp: 2, gray: 1, blue: 1 } },
+  { label: '素材2 / 灰2 / 青1',        plan: { comp: 2, gray: 2, blue: 1 } },
+  { label: '素材1 / 灰1 / 青2',        plan: { comp: 1, gray: 1, blue: 2 } },
+  { label: '【HIGH】素材5 / 灰3 / 青0', plan: { comp: 5, gray: 3, blue: 0 } },
+  { label: '【HIGH】素材5 / 灰0 / 青1', plan: { comp: 5, gray: 0, blue: 1 } },
+  { label: '【HIGH】素材4 / 灰0 / 青1', plan: { comp: 4, gray: 0, blue: 1 } },
+  { label: '【HIGH】素材3 / 灰0 / 青2', plan: { comp: 3, gray: 0, blue: 2 } },
+  { label: '【HIGH】素材3 / 灰5 / 青0', plan: { comp: 3, gray: 5, blue: 0 } },
+];
+
+// 星の観測者の星座名（短縮ラベル）を取り出す
+function stargazerShort(v) {
+  if (!v) return '';
+  const m = v.split('この試合: ')[1];
+  return m ? m.split('\n')[0].trim() : '';
+}
+
 
 const COST_COLORS={1:'#8a9aaa',2:'#44cc66',3:'#3399ff',4:'#cc44ff',5:'#ffcc44'};
 const STAR_COLORS={1:'#8a9aaa',2:'#44ccff',3:'#ffcc44'};
@@ -933,10 +977,11 @@ const AugmentScreen = ({ onPick, rng, augmentTierBoost = 0, isNoMoreAugments = f
 
 /* ── メインアプリ ── */
 /* ── メインアプリ ── */
-function SettingsScreen({ bindings, onChange, onBack }) {
+function SettingsScreen({ bindings, onChange, overrides = DEFAULT_OVERRIDES, onChangeOverrides = () => {}, onBack }) {
   const [local, setLocal] = useState(bindings);
   const [listening, setListening] = useState(null); // 入力待ち中のアクションID
   const [note, setNote] = useState('');
+  const [ov, setOv] = useState(overrides);          // 🌟 ゲーム内設定のオーバーライド
 
   // 入力待ち中：次に押されたキーを割り当てる
   useEffect(() => {
@@ -947,11 +992,9 @@ function SettingsScreen({ bindings, onChange, onBack }) {
       let k = e.key;
       if (k === 'Escape') { setListening(null); setNote(''); return; }
       if (k === ' ') k = 'space'; else k = k.toLowerCase();
-      // 修飾キー単体は割り当て不可
       if (['shift','control','alt','meta','capslock','tab','contextmenu','dead'].includes(k)) {
         setNote('そのキーは割り当てできません'); return;
       }
-      // 他のアクションと重複していたら拒否
       const dup = ACTION_ORDER.find(id => id !== listening && local[id] === k);
       if (dup) { setNote(`「${ACTION_LABELS[dup]}」と重複しています`); return; }
       const next = { ...local, [listening]: k };
@@ -963,16 +1006,70 @@ function SettingsScreen({ bindings, onChange, onBack }) {
 
   const resetDefault = () => { setLocal({ ...DEFAULT_KEYBINDINGS }); onChange({ ...DEFAULT_KEYBINDINGS }); setNote(''); setListening(null); };
 
+  // 🌟 ===== ゲーム内設定（オーバーライド） =====
+  const encList = (typeof ENCOUNTERS !== 'undefined' && Array.isArray(ENCOUNTERS)) ? ENCOUNTERS : [];
+  const gods    = (typeof GOD_DATA !== 'undefined' && Array.isArray(GOD_DATA)) ? GOD_DATA : [];
+  const stars   = (typeof stargazerVariants !== 'undefined' && Array.isArray(stargazerVariants)) ? stargazerVariants : [];
+  const psi     = (typeof PSIONIC_ITEMS !== 'undefined' && Array.isArray(PSIONIC_ITEMS)) ? PSIONIC_ITEMS : [];
+
+  const TIER_JA = { silver:'シルバー', gold:'ゴールド', prismatic:'プリズム' };
+  const setOvKey = (patch) => { const next = { ...ov, ...patch }; setOv(next); onChangeOverrides(next); };
+  const resetOverrides = () => { const d = { ...DEFAULT_OVERRIDES }; setOv(d); onChangeOverrides(d); };
+
+  const selEnc = encList.find(e => e.id === ov.encounter) || null;
+  const forcedTier = selEnc ? (selEnc.augmentForceTier || null) : null; // 遭遇によるティア固定
+  const godSel = Array.isArray(ov.gods) ? ov.gods : [];
+  const psSlots = Array.isArray(ov.psionic) ? ov.psionic : [null, null];
+
+  // 遭遇の選択肢：手動でティアを選んでいる時、別ティアを固定する遭遇は選択不可
+  const encDisabled = (e) => !!(ov.augmentTier && e.augmentForceTier && e.augmentForceTier !== ov.augmentTier);
+
+  const pickEncounter = (id) => {
+    const e = encList.find(x => x.id === id);
+    const patch = { encounter: id || null };
+    if (e && e.augmentForceTier) patch.augmentTier = null; // 遭遇がティアを固定 → 手動ティアは解除
+    setOvKey(patch);
+  };
+  const pickAugmentTier = (tier) => {
+    if (forcedTier) return; // 遭遇で固定中はいじれない
+    const patch = { augmentTier: tier || null };
+    if (tier && selEnc && selEnc.augmentForceTier && selEnc.augmentForceTier !== tier) patch.encounter = null; // 矛盾する遭遇を解除
+    setOvKey(patch);
+  };
+  const toggleGod = (id) => {
+    const cur = [...godSel];
+    const i = cur.indexOf(id);
+    if (i >= 0) cur.splice(i, 1);
+    else { if (cur.length >= 2) return; cur.push(id); }
+    setOvKey({ gods: cur.length ? cur : null });
+  };
+  const pickPsionic = (slot, name) => {
+    const cur = [psSlots[0] || null, psSlots[1] || null];
+    cur[slot] = name || null;
+    if (name && cur[1 - slot] === name) cur[1 - slot] = null; // 重複回避
+    setOvKey({ psionic: (cur[0] || cur[1]) ? cur : null });
+  };
+
+  // スタイル
+  const secTitle = { color:'#fff', fontWeight:900, fontSize:14, marginTop:22, marginBottom:10, borderTop:'1px solid var(--border)', paddingTop:16 };
+  const fLabel = { color:'rgba(255,255,255,0.85)', fontWeight:700, fontSize:12.5, marginBottom:6 };
+  const selStyle = { width:'100%', padding:'9px 10px', borderRadius:8, background:'rgba(15,23,42,0.9)', color:'#fff', border:'1px solid var(--border)', fontSize:12.5, fontFamily:'Noto Sans JP', cursor:'pointer' };
+  const chip = (active, disabled) => ({ padding:'7px 11px', borderRadius:8, fontSize:12, fontWeight:700, cursor: disabled?'not-allowed':'pointer', color: disabled?'rgba(255,255,255,0.3)':(active?'#08101a':'#fff'), background: active?'var(--gold2)':'rgba(255,255,255,0.06)', border:`1px solid ${active?'var(--gold2)':'var(--border)'}`, opacity: disabled?0.55:1, transition:'all 0.12s' });
   const rowStyle = { display:'flex', alignItems:'center', justifyContent:'space-between', gap:16, padding:'14px 18px', background:'rgba(15,23,42,0.55)', border:'1px solid var(--border)', borderRadius:10 };
 
+  const tierOpts = [ {v:null,l:'ランダム'}, {v:'silver',l:'シルバー'}, {v:'gold',l:'ゴールド'}, {v:'prismatic',l:'プリズム'} ];
+  const effTier = forcedTier || ov.augmentTier || null;
+
   return (
-    <div style={{ height:'100vh', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:24, backgroundImage:`linear-gradient(rgba(0,0,0,0.72), rgba(0,0,0,0.72)), url("https://assets.st-note.com/production/uploads/images/263587712/rectangle_large_type_2_386d7257054746a6649e14bdb1432725.jpeg?width=4000&height=4000&fit=bounds&format=jpg&quality=90")`, backgroundSize:'cover', backgroundPosition:'center', padding:20, animation:'fadeIn 0.6s ease' }}>
-      <div style={{ fontFamily:'Orbitron', fontSize:'clamp(22px,5vw,40px)', fontWeight:900, color:'#fff', letterSpacing:6, textShadow:'0 0 10px rgba(0,0,0,0.9), 0 0 20px var(--gold)' }}>
+    <div style={{ height:'100vh', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:18, backgroundImage:`linear-gradient(rgba(0,0,0,0.78), rgba(0,0,0,0.78)), url("https://assets.st-note.com/production/uploads/images/263587712/rectangle_large_type_2_386d7257054746a6649e14bdb1432725.jpeg?width=4000&height=4000&fit=bounds&format=jpg&quality=90")`, backgroundSize:'cover', backgroundPosition:'center', padding:16, animation:'fadeIn 0.6s ease' }}>
+      <div style={{ fontFamily:'Orbitron', fontSize:'clamp(20px,4.5vw,36px)', fontWeight:900, color:'#fff', letterSpacing:6, textShadow:'0 0 10px rgba(0,0,0,0.9), 0 0 20px var(--gold)' }}>
         ⚙️ 設定
       </div>
-      <div style={{ width:'min(440px, 92vw)', background:'rgba(8,16,26,0.78)', border:'1px solid var(--border)', borderRadius:16, padding:24, boxShadow:'0 20px 60px rgba(0,0,0,0.6)' }}>
+      <div style={{ width:'min(460px, 94vw)', maxHeight:'82vh', overflowY:'auto', background:'rgba(8,16,26,0.82)', border:'1px solid var(--border)', borderRadius:16, padding:22, boxShadow:'0 20px 60px rgba(0,0,0,0.6)' }}>
+
+        {/* ===== キー割り当て ===== */}
         <div style={{ color:'var(--text-inv)', fontWeight:900, fontSize:15, marginBottom:6 }}>キー割り当て</div>
-        <div style={{ color:'rgba(255,255,255,0.6)', fontSize:12, marginBottom:18 }}>
+        <div style={{ color:'rgba(255,255,255,0.6)', fontSize:12, marginBottom:14 }}>
           ゲーム中、カーソルを駒に乗せて売却キーを押すと売却できます。
         </div>
         <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
@@ -981,29 +1078,124 @@ function SettingsScreen({ bindings, onChange, onBack }) {
               <span style={{ color:'#fff', fontWeight:700, fontSize:14 }}>{ACTION_LABELS[id]}</span>
               <button
                 onClick={() => { setListening(id); setNote('割り当てたいキーを押してください（Escでキャンセル）'); }}
-                style={{
-                  minWidth:88, height:40, borderRadius:8, cursor:'pointer', fontFamily:'Orbitron', fontWeight:700, fontSize:15,
-                  color: listening===id ? '#08101a' : '#fff',
-                  background: listening===id ? 'var(--gold2)' : 'rgba(255,255,255,0.06)',
-                  border: `2px solid ${listening===id ? 'var(--gold2)' : 'var(--blue)'}`,
-                  boxShadow: listening===id ? '0 0 16px var(--gold)' : 'none',
-                  transition:'all 0.15s'
-                }}
-              >
+                style={{ minWidth:88, height:40, borderRadius:8, cursor:'pointer', fontFamily:'Orbitron', fontWeight:700, fontSize:15,
+                  color: listening===id ? '#08101a' : '#fff', background: listening===id ? 'var(--gold2)' : 'rgba(255,255,255,0.06)',
+                  border: `2px solid ${listening===id ? 'var(--gold2)' : 'var(--blue)'}`, boxShadow: listening===id ? '0 0 16px var(--gold)' : 'none', transition:'all 0.15s' }}>
                 {listening===id ? '入力待ち…' : fmtKey(local[id])}
               </button>
             </div>
           ))}
         </div>
-        <div style={{ minHeight:20, marginTop:12, color:'var(--gold2)', fontSize:12, textAlign:'center' }}>{note}</div>
-        <div style={{ display:'flex', gap:12, marginTop:10 }}>
-          <button className="menu-btn" style={{ flex:1, background:'rgba(15,23,42,0.8)', color:'#fff', borderColor:'var(--border)' }} onClick={resetDefault}>
-            デフォルトに戻す
-          </button>
-          <button className="menu-btn" style={{ flex:1, background:'var(--blue)', color:'#fff', borderColor:'var(--blue)' }} onClick={onBack}>
-            メニューに戻る
-          </button>
+        <div style={{ minHeight:18, marginTop:10, color:'var(--gold2)', fontSize:12, textAlign:'center' }}>{note}</div>
+        <button className="menu-btn" style={{ width:'100%', marginTop:4, background:'rgba(15,23,42,0.8)', color:'#fff', borderColor:'var(--border)', fontSize:13 }} onClick={resetDefault}>
+          キーを既定に戻す
+        </button>
+
+        {/* ===== ゲーム内設定（手動セットアップ） ===== */}
+        <div style={secTitle}>🎮 ゲーム内設定（手動セットアップ）</div>
+        <div style={{ color:'rgba(255,255,255,0.6)', fontSize:11.5, marginBottom:14, lineHeight:1.5 }}>
+          各項目を「ランダム」のままにすると従来通りランダムです。設定するとその試合で固定されます。
         </div>
+
+        {/* 神を2体選択 */}
+        <div style={{ marginBottom:16 }}>
+          <div style={fLabel}>神を2体選択 <span style={{ color:'rgba(255,255,255,0.45)', fontWeight:400 }}>（1体目が発動）</span></div>
+          <div style={{ display:'flex', flexWrap:'wrap', gap:6 }}>
+            {gods.map(g => {
+              const order = godSel.indexOf(g.id);
+              const active = order >= 0;
+              const disabled = !active && godSel.length >= 2;
+              return (
+                <button key={g.id} onClick={() => toggleGod(g.id)} disabled={disabled} style={chip(active, disabled)}>
+                  {active ? `${order+1}. ` : ''}{g.name.replace(/\n/g,'')}
+                </button>
+              );
+            })}
+          </div>
+          {godSel.length > 0 && (
+            <button onClick={() => setOvKey({ gods:null })} style={{ marginTop:8, ...chip(false,false), fontSize:11 }}>↺ ランダムに戻す</button>
+          )}
+        </div>
+
+        {/* 遭遇を選択 */}
+        <div style={{ marginBottom:16 }}>
+          <div style={fLabel}>遭遇を選択</div>
+          <select style={selStyle} value={ov.encounter || ''} onChange={e => pickEncounter(e.target.value)}>
+            <option value="">ランダム</option>
+            {encList.map(e => (
+              <option key={e.id} value={e.id} disabled={encDisabled(e)}>
+                {e.icon} {e.champ}（{e.jaName}）{e.augmentForceTier ? `／${TIER_JA[e.augmentForceTier]}固定` : ''}{encDisabled(e) ? '（ティア不一致）' : ''}
+              </option>
+            ))}
+          </select>
+          {forcedTier && (
+            <div style={{ marginTop:6, color:'var(--gold2)', fontSize:11 }}>※ この遭遇はオーグメントを「{TIER_JA[forcedTier]}」に固定します。</div>
+          )}
+        </div>
+
+        {/* オーグメントティア */}
+        <div style={{ marginBottom:16 }}>
+          <div style={fLabel}>オーグメントティア</div>
+          <div style={{ display:'flex', flexWrap:'wrap', gap:6 }}>
+            {tierOpts.map(t => {
+              const active = (effTier || null) === t.v;
+              const disabled = !!forcedTier; // 遭遇で固定中は変更不可
+              return (
+                <button key={String(t.v)} onClick={() => pickAugmentTier(t.v)} disabled={disabled} style={chip(active, disabled)}>{t.l}</button>
+              );
+            })}
+          </div>
+          {forcedTier && <div style={{ marginTop:6, color:'rgba(255,255,255,0.5)', fontSize:11 }}>遭遇により「{TIER_JA[forcedTier]}」固定中（変更不可）</div>}
+          {!forcedTier && ov.augmentTier && <div style={{ marginTop:6, color:'rgba(255,255,255,0.5)', fontSize:11 }}>※ 別ティアを固定する遭遇は選択できなくなります。</div>}
+        </div>
+
+        {/* 星の観測者 */}
+        <div style={{ marginBottom:16 }}>
+          <div style={fLabel}>星の観測者</div>
+          <select style={selStyle} value={ov.stargazer == null ? '' : String(ov.stargazer)} onChange={e => setOvKey({ stargazer: e.target.value === '' ? null : Number(e.target.value) })}>
+            <option value="">ランダム</option>
+            {stars.map((v, i) => (<option key={i} value={i}>星座: {stargazerShort(v)}</option>))}
+          </select>
+        </div>
+
+        {/* サイオニックアイテム 初手 / 2手目 */}
+        <div style={{ marginBottom:16 }}>
+          <div style={fLabel}>サイオニックアイテム</div>
+          <div style={{ display:'flex', gap:8 }}>
+            <div style={{ flex:1 }}>
+              <div style={{ color:'rgba(255,255,255,0.55)', fontSize:11, marginBottom:4 }}>初手</div>
+              <select style={selStyle} value={psSlots[0] || ''} onChange={e => pickPsionic(0, e.target.value)}>
+                <option value="">ランダム</option>
+                {psi.map(p => (<option key={p.name} value={p.name} disabled={psSlots[1] === p.name}>{p.jaName}</option>))}
+              </select>
+            </div>
+            <div style={{ flex:1 }}>
+              <div style={{ color:'rgba(255,255,255,0.55)', fontSize:11, marginBottom:4 }}>2手目</div>
+              <select style={selStyle} value={psSlots[1] || ''} onChange={e => pickPsionic(1, e.target.value)}>
+                <option value="">ランダム</option>
+                {psi.map(p => (<option key={p.name} value={p.name} disabled={psSlots[0] === p.name}>{p.jaName}</option>))}
+              </select>
+            </div>
+          </div>
+        </div>
+
+        {/* アイテムドロップテーブル */}
+        <div style={{ marginBottom:8 }}>
+          <div style={fLabel}>アイテムドロップテーブル <span style={{ color:'rgba(255,255,255,0.45)', fontWeight:400 }}>（素材/灰オーブ/青オーブ）</span></div>
+          <select style={selStyle} value={ov.dropPlanIndex == null ? '' : String(ov.dropPlanIndex)} onChange={e => setOvKey({ dropPlanIndex: e.target.value === '' ? null : Number(e.target.value) })}>
+            <option value="">ランダム</option>
+            {DROP_PLANS.map((d, i) => (<option key={i} value={i}>{d.label}</option>))}
+          </select>
+        </div>
+
+        <button className="menu-btn" style={{ width:'100%', marginTop:14, background:'rgba(80,20,20,0.7)', color:'#fff', borderColor:'var(--red)', fontSize:13 }} onClick={resetOverrides}>
+          ゲーム内設定をすべてランダムに戻す
+        </button>
+
+        {/* 戻る */}
+        <button className="menu-btn" style={{ width:'100%', marginTop:18, background:'var(--blue)', color:'#fff', borderColor:'var(--blue)' }} onClick={onBack}>
+          メニューに戻る
+        </button>
       </div>
     </div>
   );
@@ -1021,6 +1213,7 @@ function Main() {
   const [seed, setSeed] = useState(initialSeed ? initialSeed.toUpperCase() : "");
   const [gameKey, setGameKey] = useState(0);
   const [keyBindings, setKeyBindings] = useState(loadKeyBindings); // 🌟 キー割り当て
+  const [gameOverrides, setGameOverrides] = useState(loadOverrides); // 🌟 ゲーム内設定の手動オーバーライド
 
   const startWithSeed = (targetSeed) => {
     const newSeed = targetSeed || Math.random().toString(36).substring(2, 9).toUpperCase();
@@ -1091,15 +1284,17 @@ function Main() {
       <SettingsScreen
         bindings={keyBindings}
         onChange={(kb) => { setKeyBindings(kb); saveKeyBindings(kb); }}
+        overrides={gameOverrides}
+        onChangeOverrides={(ov) => { setGameOverrides(ov); saveOverrides(ov); }}
         onBack={() => setView('MENU')}
       />
     );
   }
 
-  return <App key={gameKey} seed={seed} keyBindings={keyBindings} onRestart={() => startWithSeed(seed)} onNewGame={() => startWithSeed()} />;
+  return <App key={gameKey} seed={seed} keyBindings={keyBindings} gameOverrides={gameOverrides} onRestart={() => startWithSeed(seed)} onNewGame={() => startWithSeed()} />;
 }
 
-function App({ seed, onRestart, onNewGame, keyBindings = DEFAULT_KEYBINDINGS }) {
+function App({ seed, onRestart, onNewGame, keyBindings = DEFAULT_KEYBINDINGS, gameOverrides = DEFAULT_OVERRIDES }) {
   // 🌟 RNG（乱数生成器）をジャンルごとに独立させ、他の行動によるズレを防止！
   const rngSys = useMemo(() => createRNG(seed + "_sys"), [seed]);
   const rngShop = useMemo(() => createRNG(seed + "_shop"), [seed]);
@@ -1108,30 +1303,56 @@ function App({ seed, onRestart, onNewGame, keyBindings = DEFAULT_KEYBINDINGS }) 
   const rngMisc = useMemo(() => createRNG(seed + "_misc"), [seed]);
   const rngEnc  = useMemo(() => createRNG(seed + "_enc"),  [seed]);
 
-  const currentStargazerDesc = useMemo(() => stargazerVariants[Math.floor(rngSys() * stargazerVariants.length)], [rngSys]);
+  const currentStargazerDesc = useMemo(() => {
+    const i = gameOverrides && gameOverrides.stargazer;
+    if (i != null && stargazerVariants[i]) return stargazerVariants[i];   // 🌟 手動指定
+    return stargazerVariants[Math.floor(rngSys() * stargazerVariants.length)];
+  }, [rngSys, gameOverrides]);
 
   // 1. 神の抽選
   const encounterGods = useMemo(() => {
+    const ov = gameOverrides && gameOverrides.gods;                       // 🌟 手動指定（1体目が発動）
+    if (ov && ov.length) {
+      const chosen = ov.map(id => GOD_DATA.find(g => g.id === id)).filter(Boolean);
+      if (chosen.length >= 2) return [chosen[0], chosen[1]];
+      if (chosen.length === 1) {
+        const others = shuffleArray(GOD_DATA.filter(g => g.id !== chosen[0].id), rngSys);
+        return [chosen[0], others[0]];
+      }
+    }
     const shuffled = shuffleArray(GOD_DATA, rngSys);
     return [shuffled[0], shuffled[1]];
-  }, [rngSys]);
+  }, [rngSys, gameOverrides]);
 
   // 2. サイオニックアイテムの抽選
   const currentPsionicItems = useMemo(() => {
+    const ov = gameOverrides && gameOverrides.psionic;                    // 🌟 [初手, 2手目]（null可）
+    if (ov && (ov[0] || ov[1])) {
+      let first  = ov[0] ? PSIONIC_ITEMS.find(p => p.name === ov[0]) : null;
+      let second = ov[1] ? PSIONIC_ITEMS.find(p => p.name === ov[1]) : null;
+      const used = new Set([first && first.name, second && second.name].filter(Boolean));
+      const pool = shuffleArray(PSIONIC_ITEMS.filter(p => !used.has(p.name)), rngSys);
+      let pi = 0;
+      if (!first)  first  = pool[pi++];
+      if (!second) second = pool[pi++];
+      return [first, second];
+    }
     const shuffled = shuffleArray(PSIONIC_ITEMS, rngSys);
     return [shuffled[0], shuffled[1]];
-  }, [rngSys]);
+  }, [rngSys, gameOverrides]);
 
   // 🌟 遭遇（Opening Encounter）の抽選 ── 神(GOD_DATA)とは別枠。専用RNGで出現確率(prob)による加重抽選。
   // data-encounters.js が未読込でも白画面で落ちないよう防御（その場合は遭遇なしで起動）。
   const encounter = useMemo(() => {
     const list = (typeof ENCOUNTERS !== 'undefined' && Array.isArray(ENCOUNTERS)) ? ENCOUNTERS : [];
     if (list.length === 0) return null;
+    const ovId = gameOverrides && gameOverrides.encounter;               // 🌟 手動指定
+    if (ovId) { const f = list.find(e => e.id === ovId); if (f) return f; }
     const total = list.reduce((sum, e) => sum + (e.prob || 0), 0);
     let r = rngEnc() * total;
     for (const e of list) { r -= (e.prob || 0); if (r <= 0) return e; }
     return list[list.length - 1];
-  }, [rngEnc]);
+  }, [rngEnc, gameOverrides]);
   const encounterAppliedRef = useRef(false);    // 1-1→1-2 の開始効果ガード
   const encounter21AppliedRef = useRef(false);  // 2-1 到達時の効果ガード
   useEffect(() => {
@@ -1854,20 +2075,25 @@ useEffect(() => {
   }, [mergeToast]);
 
   const [dropPlan] = useState(() => {
-    const roll = rngDrop() * 100;
     let plan;
-    // BASE (95%)
-    if (roll < 33.25) plan = { comp: 3, gray: 3, blue: 0 };
-    else if (roll < 66.50) plan = { comp: 3, gray: 0, blue: 1 };
-    else if (roll < 77.90) plan = { comp: 2, gray: 1, blue: 1 };
-    else if (roll < 89.30) plan = { comp: 2, gray: 2, blue: 1 };
-    else if (roll < 95.00) plan = { comp: 1, gray: 1, blue: 2 };
-    // HIGH (5%)
-    else if (roll < 96.15) plan = { comp: 5, gray: 3, blue: 0 };
-    else if (roll < 97.30) plan = { comp: 5, gray: 0, blue: 1 };
-    else if (roll < 98.20) plan = { comp: 4, gray: 0, blue: 1 };
-    else if (roll < 99.10) plan = { comp: 3, gray: 0, blue: 2 };
-    else plan = { comp: 3, gray: 5, blue: 0 };
+    const ovIdx = gameOverrides && gameOverrides.dropPlanIndex;          // 🌟 手動指定
+    if (ovIdx != null && DROP_PLANS[ovIdx]) {
+      plan = { ...DROP_PLANS[ovIdx].plan };
+    } else {
+      const roll = rngDrop() * 100;
+      // BASE (95%)
+      if (roll < 33.25) plan = { comp: 3, gray: 3, blue: 0 };
+      else if (roll < 66.50) plan = { comp: 3, gray: 0, blue: 1 };
+      else if (roll < 77.90) plan = { comp: 2, gray: 1, blue: 1 };
+      else if (roll < 89.30) plan = { comp: 2, gray: 2, blue: 1 };
+      else if (roll < 95.00) plan = { comp: 1, gray: 1, blue: 2 };
+      // HIGH (5%)
+      else if (roll < 96.15) plan = { comp: 5, gray: 3, blue: 0 };
+      else if (roll < 97.30) plan = { comp: 5, gray: 0, blue: 1 };
+      else if (roll < 98.20) plan = { comp: 4, gray: 0, blue: 1 };
+      else if (roll < 99.10) plan = { comp: 3, gray: 0, blue: 2 };
+      else plan = { comp: 3, gray: 5, blue: 0 };
+    }
 
     const allDrops = [];
     for (let i = 0; i < plan.comp; i++) allDrops.push('comp');
@@ -3114,7 +3340,7 @@ const handleAugmentPick = (aug, historyContext) => {
 
 
       <TraitTooltip data={traitTooltipData} stargazerDesc={currentStargazerDesc} psionicItems={currentPsionicItems} arbiterRule={arbiterRule} />
-      {showAugment && !noMoreAugments && <AugmentScreen onPick={handleAugmentPick} rng={rngAug} augmentTierBoost={augmentTierBoost} forceTier={encounter?.augmentForceTier || null} rerollBonus={encounter?.augmentRerollBonus || 0} />}
+      {showAugment && !noMoreAugments && <AugmentScreen onPick={handleAugmentPick} rng={rngAug} augmentTierBoost={augmentTierBoost} forceTier={encounter?.augmentForceTier || (gameOverrides && gameOverrides.augmentTier) || null} rerollBonus={encounter?.augmentRerollBonus || 0} />}
       {dropMsg && <div style={{ position:'fixed', top:'15%', left:'50%', transform:'translateX(-50%)', background:'rgba(26,159,255,.9)', border:'1px solid white', borderRadius:10, padding:'10px 20px', zIndex:3000, fontFamily:'Noto Sans JP', fontSize:14, fontWeight:900, color:'white', textAlign:'center', maxWidth:'90%', boxShadow:'0 4px 20px rgba(0,0,0,0.3)' }}>{dropMsg}</div>}
       {mergeToast && <div style={{ position:'fixed', top:'25%', left:'50%', transform:'translateX(-50%)', background:'rgba(8,13,26,.97)', border:`1px solid ${STAR_COLORS[mergeToast.star]}`, borderRadius:12, padding:20, zIndex:4000, animation:'starUpAnim .4s ease', display:'flex', alignItems:'center', gap:15 }}><img src={boardIcon(mergeToast.img)} style={{ width:60, height:60, borderRadius:8, objectFit:'cover', border:`2px solid ${STAR_COLORS[mergeToast.star]}` }}/><div><div style={{ fontFamily:'Noto Sans JP', fontSize:11, color:STAR_COLORS[mergeToast.star] }}>スター昇格！</div><div style={{ fontSize:20, fontWeight:900, color:'white' }}>{mergeToast.jaName}</div></div></div>}
 
