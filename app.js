@@ -75,6 +75,14 @@ function stargazerShort(v) {
   return m ? m.split('\n')[0].trim() : '';
 }
 
+// 🌟 遭遇id → チャンピオン画像キー（boardIcon 用）。CDNに無い場合は絵文字へフォールバック。
+const ENC_IMG = {
+  viktor:'Viktor', miipsy:'Miipsy', lissandra:'Lissandra', poppy:'Poppy', twistedfate:'TwistedFate',
+  missfortune:'MissFortune', fiora:'Fiora', sona:'Sona', zoe:'Zoe', graves:'Graves', shen:'Shen',
+  talon:'Talon', velkoz:'Velkoz', tahmkench:'TahmKench', none:null, rastt:'Rastt', ezreal:'Ezreal',
+  ornn:'Ornn', morgana:'Morgana'
+};
+
 
 const COST_COLORS={1:'#8a9aaa',2:'#44cc66',3:'#3399ff',4:'#cc44ff',5:'#ffcc44'};
 const STAR_COLORS={1:'#8a9aaa',2:'#44ccff',3:'#ffcc44'};
@@ -1097,39 +1105,68 @@ function SettingsScreen({ bindings, onChange, overrides = DEFAULT_OVERRIDES, onC
           各項目を「ランダム」のままにすると従来通りランダムです。設定するとその試合で固定されます。
         </div>
 
-        {/* 神を2体選択 */}
-        <div style={{ marginBottom:16 }}>
+        {/* 神を2体選択（画像クリック） */}
+        <div style={{ marginBottom:18 }}>
           <div style={fLabel}>神を2体選択 <span style={{ color:'rgba(255,255,255,0.45)', fontWeight:400 }}>（1体目が発動）</span></div>
-          <div style={{ display:'flex', flexWrap:'wrap', gap:6 }}>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(82px, 1fr))', gap:8 }}>
             {gods.map(g => {
               const order = godSel.indexOf(g.id);
               const active = order >= 0;
               const disabled = !active && godSel.length >= 2;
               return (
-                <button key={g.id} onClick={() => toggleGod(g.id)} disabled={disabled} style={chip(active, disabled)}>
-                  {active ? `${order+1}. ` : ''}{g.name.replace(/\n/g,'')}
-                </button>
+                <div key={g.id} onClick={() => { if (!disabled) toggleGod(g.id); }}
+                  style={{ cursor: disabled?'not-allowed':'pointer', opacity: disabled?0.4:1, textAlign:'center' }}>
+                  <div style={{ position:'relative', width:'100%', aspectRatio:'1', borderRadius:10, overflow:'hidden',
+                    border:`2px solid ${active?'var(--gold2)':'var(--border)'}`, boxShadow: active?'0 0 12px var(--gold)':'none', background:'#0b1622', transition:'all 0.12s' }}>
+                    <img src={g.imgUrl} alt={g.name} style={{ width:'100%', height:'100%', objectFit:'cover' }} onError={(e)=>{e.target.style.display='none';}} />
+                    {active && (
+                      <div style={{ position:'absolute', top:3, left:3, width:20, height:20, borderRadius:'50%', background:'var(--gold2)', color:'#08101a', fontWeight:900, fontSize:12, display:'flex', alignItems:'center', justifyContent:'center', boxShadow:'0 1px 4px rgba(0,0,0,0.6)' }}>{order+1}</div>
+                    )}
+                  </div>
+                  <div style={{ marginTop:4, fontSize:10, fontWeight:700, color: active?'var(--gold2)':'rgba(255,255,255,0.8)', lineHeight:1.15 }}>{g.name.replace(/\n/g,' ')}</div>
+                </div>
               );
             })}
           </div>
           {godSel.length > 0 && (
-            <button onClick={() => setOvKey({ gods:null })} style={{ marginTop:8, ...chip(false,false), fontSize:11 }}>↺ ランダムに戻す</button>
+            <button onClick={() => setOvKey({ gods:null })} style={{ marginTop:10, ...chip(false,false), fontSize:11 }}>↺ ランダムに戻す</button>
           )}
         </div>
 
-        {/* 遭遇を選択 */}
-        <div style={{ marginBottom:16 }}>
+        {/* 遭遇を選択（画像＋遭遇名） */}
+        <div style={{ marginBottom:18 }}>
           <div style={fLabel}>遭遇を選択</div>
-          <select style={selStyle} value={ov.encounter || ''} onChange={e => pickEncounter(e.target.value)}>
-            <option value="">ランダム</option>
-            {encList.map(e => (
-              <option key={e.id} value={e.id} disabled={encDisabled(e)}>
-                {e.icon} {e.champ}（{e.jaName}）{e.augmentForceTier ? `／${TIER_JA[e.augmentForceTier]}固定` : ''}{encDisabled(e) ? '（ティア不一致）' : ''}
-              </option>
-            ))}
-          </select>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(200px, 1fr))', gap:8 }}>
+            {/* ランダム */}
+            <div onClick={() => pickEncounter('')}
+              style={{ display:'flex', alignItems:'center', gap:8, padding:8, borderRadius:10, cursor:'pointer',
+                border:`2px solid ${!ov.encounter?'var(--gold2)':'var(--border)'}`, background: !ov.encounter?'rgba(212,175,55,0.12)':'rgba(15,23,42,0.5)' }}>
+              <div style={{ width:40, height:40, borderRadius:8, flexShrink:0, display:'flex', alignItems:'center', justifyContent:'center', fontSize:22, background:'#0b1622' }}>🎲</div>
+              <div style={{ fontSize:12, fontWeight:700, color: !ov.encounter?'var(--gold2)':'#fff' }}>ランダム</div>
+            </div>
+            {encList.map(e => {
+              const active = ov.encounter === e.id;
+              const disabled = encDisabled(e);
+              const imgKey = ENC_IMG[e.id];
+              return (
+                <div key={e.id} onClick={() => { if (!disabled) pickEncounter(e.id); }}
+                  style={{ display:'flex', alignItems:'center', gap:8, padding:8, borderRadius:10, cursor: disabled?'not-allowed':'pointer', opacity: disabled?0.4:1,
+                    border:`2px solid ${active?'var(--gold2)':'var(--border)'}`, background: active?'rgba(212,175,55,0.12)':'rgba(15,23,42,0.5)', boxShadow: active?'0 0 10px var(--gold)':'none', transition:'all 0.12s' }}>
+                  <div style={{ position:'relative', width:40, height:40, borderRadius:8, flexShrink:0, overflow:'hidden', display:'flex', alignItems:'center', justifyContent:'center', fontSize:22, background: (e.color||'#0b1622')+'33', border:`1px solid ${e.color||'var(--border)'}` }}>
+                    <span>{e.icon}</span>
+                    {imgKey && <img src={boardIcon(imgKey)} alt={e.champ} style={{ position:'absolute', inset:0, width:'100%', height:'100%', objectFit:'cover' }} onError={(ev)=>{ev.target.style.display='none';}} />}
+                  </div>
+                  <div style={{ minWidth:0 }}>
+                    <div style={{ fontSize:12, fontWeight:900, color: active?'var(--gold2)':'#fff', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{e.champ}</div>
+                    <div style={{ fontSize:10, color:'rgba(255,255,255,0.6)', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{e.jaName}</div>
+                    {e.augmentForceTier && <div style={{ fontSize:9.5, fontWeight:700, color:'var(--gold2)' }}>{TIER_JA[e.augmentForceTier]}固定{disabled?'（不一致）':''}</div>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
           {forcedTier && (
-            <div style={{ marginTop:6, color:'var(--gold2)', fontSize:11 }}>※ この遭遇はオーグメントを「{TIER_JA[forcedTier]}」に固定します。</div>
+            <div style={{ marginTop:8, color:'var(--gold2)', fontSize:11 }}>※ この遭遇はオーグメントを「{TIER_JA[forcedTier]}」に固定します。</div>
           )}
         </div>
 
@@ -1158,25 +1195,31 @@ function SettingsScreen({ bindings, onChange, overrides = DEFAULT_OVERRIDES, onC
           </select>
         </div>
 
-        {/* サイオニックアイテム 初手 / 2手目 */}
+        {/* サイオニックアイテム 初手 / 2手目（画像クリック） */}
         <div style={{ marginBottom:16 }}>
           <div style={fLabel}>サイオニックアイテム</div>
-          <div style={{ display:'flex', gap:8 }}>
-            <div style={{ flex:1 }}>
-              <div style={{ color:'rgba(255,255,255,0.55)', fontSize:11, marginBottom:4 }}>初手</div>
-              <select style={selStyle} value={psSlots[0] || ''} onChange={e => pickPsionic(0, e.target.value)}>
-                <option value="">ランダム</option>
-                {psi.map(p => (<option key={p.name} value={p.name} disabled={psSlots[1] === p.name}>{p.jaName}</option>))}
-              </select>
+          {[0,1].map(slot => (
+            <div key={slot} style={{ marginBottom:10 }}>
+              <div style={{ color:'rgba(255,255,255,0.55)', fontSize:11, marginBottom:5 }}>{slot===0?'初手':'2手目'}</div>
+              <div style={{ display:'flex', flexWrap:'wrap', gap:6, alignItems:'center' }}>
+                {/* ランダム */}
+                <div onClick={() => pickPsionic(slot, '')} title="ランダム"
+                  style={{ width:44, height:44, borderRadius:8, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', fontSize:18,
+                    border:`2px solid ${!psSlots[slot]?'var(--gold2)':'var(--border)'}`, background: !psSlots[slot]?'rgba(212,175,55,0.15)':'rgba(15,23,42,0.6)' }}>🎲</div>
+                {psi.map(p => {
+                  const active = psSlots[slot] === p.name;
+                  const disabled = psSlots[1-slot] === p.name;
+                  return (
+                    <div key={p.name} onClick={() => { if (!disabled) pickPsionic(slot, p.name); }} title={p.jaName}
+                      style={{ position:'relative', width:44, height:44, borderRadius:8, overflow:'hidden', cursor: disabled?'not-allowed':'pointer', opacity: disabled?0.35:1,
+                        border:`2px solid ${active?'var(--gold2)':'var(--border)'}`, boxShadow: active?'0 0 10px var(--gold)':'none', background:'#0b1622', transition:'all 0.12s' }}>
+                      <img src={getMetaTFTItemUrl(p.name)} alt={p.jaName} style={{ width:'100%', height:'100%', objectFit:'cover' }} onError={(e)=>{e.target.style.display='none';}} />
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-            <div style={{ flex:1 }}>
-              <div style={{ color:'rgba(255,255,255,0.55)', fontSize:11, marginBottom:4 }}>2手目</div>
-              <select style={selStyle} value={psSlots[1] || ''} onChange={e => pickPsionic(1, e.target.value)}>
-                <option value="">ランダム</option>
-                {psi.map(p => (<option key={p.name} value={p.name} disabled={psSlots[0] === p.name}>{p.jaName}</option>))}
-              </select>
-            </div>
-          </div>
+          ))}
         </div>
 
         {/* アイテムドロップテーブル */}
