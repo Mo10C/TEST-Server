@@ -1,33 +1,1413 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<title>TFT Set 17 - 1 Stage Simulator - </title>
-<link rel="icon" href="favicon.ico" type="image/x-icon">
-<script src="https://unpkg.com/react@18/umd/react.development.js"></script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Orbitron:wght@400;700;900&family=Noto+Sans+JP:wght@400;700;900&display=swap" rel="stylesheet">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TFT Coaching Notes</title>
+    <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --gold: #C89B3C;
+            --gold-light: #F0D58C;
+            --gold-pale: #FDF7E8;
+            --gold-dim: #8C6A24;
+            --navy: #0A1628;
+            --navy-mid: #1A2A42;
+            --navy-light: #243652;
+            --ink: #1C2333;
+            --ink-mid: #3A4460;
+            --ink-light: #6B7BA0;
+            --ink-xlight: #A8B3CC;
+            --surface: #FFFFFF;
+            --surface-2: #F4F6FA;
+            --surface-3: #EBEEf5;
+            --border: #DDE2EE;
+            --border-strong: #C8D0E0;
+            --green: #1A8A5A;
+            --green-bg: #EAF7F0;
+            --red: #C0392B;
+            --red-bg: #FDECEA;
+            --blue: #1260D4;
+            --blue-bg: #EBF1FD;
+            --radius-sm: 6px;
+            --radius-md: 10px;
+            --radius-lg: 16px;
+            --shadow-sm: 0 1px 3px rgba(10,22,40,0.08), 0 1px 2px rgba(10,22,40,0.04);
+            --shadow-md: 0 4px 12px rgba(10,22,40,0.10), 0 2px 4px rgba(10,22,40,0.05);
+            --shadow-lg: 0 8px 24px rgba(10,22,40,0.12), 0 4px 8px rgba(10,22,40,0.06);
+        }
 
+        * { box-sizing: border-box; margin: 0; padding: 0; }
 
-<link rel="stylesheet" href="styles.css">
+        body {
+            font-family: 'Noto Sans JP', sans-serif;
+            background: var(--surface-2);
+            color: var(--ink);
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
+        /* ── HEADER ── */
+        .app-header {
+            background: var(--navy);
+            color: white;
+            padding: 0 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            height: 52px;
+            flex-shrink: 0;
+            position: relative;
+        }
+
+        .app-header::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, var(--gold) 0%, var(--gold-light) 50%, var(--gold) 100%);
+        }
+
+        .header-logo {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .header-logo-mark {
+            width: 28px;
+            height: 28px;
+            background: var(--gold);
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Rajdhani', sans-serif;
+            font-weight: 700;
+            font-size: 13px;
+            color: var(--navy);
+            letter-spacing: -0.5px;
+        }
+
+        .header-logo-text {
+            font-family: 'Rajdhani', sans-serif;
+            font-weight: 700;
+            font-size: 17px;
+            color: var(--gold-light);
+            letter-spacing: 1px;
+        }
+
+        .header-links {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .link-btn {
+            color: var(--ink-xlight);
+            text-decoration: none;
+            padding: 5px 10px;
+            border-radius: var(--radius-sm);
+            border: 1px solid rgba(255,255,255,0.12);
+            font-size: 12px;
+            font-weight: 500;
+            transition: all 0.15s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            background: rgba(255,255,255,0.05);
+        }
+
+        .link-btn:hover {
+            background: rgba(200,155,60,0.15);
+            border-color: rgba(200,155,60,0.4);
+            color: var(--gold-light);
+        }
+
+        .link-btn img {
+            width: 14px;
+            height: 14px;
+            border-radius: 3px;
+            object-fit: contain;
+        }
+
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .header-actions.hidden { display: none; }
+
+        .header-btn {
+            border: none;
+            padding: 7px 14px;
+            border-radius: var(--radius-sm);
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            font-family: 'Noto Sans JP', sans-serif;
+            white-space: nowrap;
+        }
+
+        .header-btn:hover { transform: translateY(-1px); }
+
+        .btn-primary {
+            background: var(--gold);
+            color: var(--navy);
+        }
+
+        .btn-primary:hover { background: var(--gold-light); }
+
+        .btn-ghost {
+            background: rgba(255,255,255,0.08);
+            color: rgba(255,255,255,0.8);
+            border: 1px solid rgba(255,255,255,0.15);
+        }
+
+        .btn-ghost:hover {
+            background: rgba(255,255,255,0.14);
+            color: white;
+        }
+
+        /* ── LAYOUT ── */
+        .app-container {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        /* ── SIDEBAR ── */
+        .sidebar {
+            width: 220px;
+            background: var(--surface);
+            display: flex;
+            flex-direction: column;
+            border-right: 1px solid var(--border);
+            flex-shrink: 0;
+            overflow: hidden;
+        }
+
+        .sidebar.hidden { display: none; }
+
+        .sidebar-section-label {
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 1.5px;
+            color: var(--ink-xlight);
+            text-transform: uppercase;
+            padding: 16px 16px 6px;
+        }
+
+        .stage-btn {
+            display: flex;
+            align-items: center;
+            width: 100%;
+            padding: 9px 16px;
+            background: none;
+            border: none;
+            text-align: left;
+            cursor: pointer;
+            font-family: 'Noto Sans JP', sans-serif;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--ink-mid);
+            transition: all 0.12s;
+            border-radius: 0;
+            position: relative;
+        }
+
+        .stage-btn:hover {
+            background: var(--surface-2);
+            color: var(--ink);
+        }
+
+        .stage-btn.active {
+            background: var(--gold-pale);
+            color: var(--gold-dim);
+            font-weight: 700;
+        }
+
+        .stage-btn.active::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: 3px;
+            background: var(--gold);
+            border-radius: 0 2px 2px 0;
+        }
+
+        .home-btn {
+            background: var(--surface-2);
+            border-bottom: 1px solid var(--border);
+            color: var(--ink-mid);
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .home-btn.active {
+            background: var(--navy);
+            color: var(--gold-light);
+        }
+
+        .home-btn.active::before {
+            background: var(--gold);
+        }
+
+        .sidebar-footer {
+            margin-top: auto;
+            border-top: 1px solid var(--border);
+        }
+
+        .summary-btn {
+            color: var(--green);
+            font-weight: 700;
+            background: var(--green-bg);
+        }
+
+        .summary-btn.active {
+            background: var(--green);
+            color: white;
+        }
+
+        /* ── MAIN CONTENT ── */
+        .main-content {
+            flex: 1;
+            padding: 24px 28px;
+            overflow-y: auto;
+            background: var(--surface-2);
+        }
+
+        .main-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .session-title-input {
+            font-size: 1.5rem;
+            font-family: 'Rajdhani', sans-serif;
+            font-weight: 700;
+            color: var(--ink);
+            border: 1.5px solid transparent;
+            background: transparent;
+            padding: 6px 10px;
+            border-radius: var(--radius-sm);
+            width: 60%;
+            transition: all 0.15s;
+            letter-spacing: 0.3px;
+        }
+
+        .session-title-input:hover { border-color: var(--border-strong); background: var(--surface); }
+        .session-title-input:focus { border-color: var(--gold); background: var(--surface); outline: none; box-shadow: 0 0 0 3px rgba(200,155,60,0.12); }
+
+        .stage-badge {
+            font-family: 'Rajdhani', sans-serif;
+            font-weight: 700;
+            font-size: 15px;
+            color: var(--navy-light);
+            background: var(--surface-3);
+            padding: 6px 14px;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border);
+            letter-spacing: 1px;
+        }
+
+        /* ── HOME VIEW ── */
+        .home-view { }
+
+        .home-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+        }
+
+        .home-title {
+            font-family: 'Rajdhani', sans-serif;
+            font-weight: 700;
+            font-size: 22px;
+            color: var(--ink);
+            letter-spacing: 0.5px;
+        }
+
+        .home-title span {
+            color: var(--gold-dim);
+        }
+
+        .new-session-btn {
+            background: var(--gold);
+            color: var(--navy);
+            border: none;
+            padding: 9px 18px;
+            border-radius: var(--radius-sm);
+            font-family: 'Rajdhani', sans-serif;
+            font-weight: 700;
+            font-size: 15px;
+            cursor: pointer;
+            transition: all 0.15s;
+            letter-spacing: 0.5px;
+        }
+
+        .new-session-btn:hover {
+            background: var(--gold-light);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-md);
+        }
+
+        .session-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 16px;
+        }
+
+        .session-card {
+            background: var(--surface);
+            border-radius: var(--radius-lg);
+            padding: 20px;
+            border: 1px solid var(--border);
+            cursor: pointer;
+            transition: all 0.15s;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            box-shadow: var(--shadow-sm);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .session-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, var(--gold) 0%, var(--gold-light) 100%);
+            opacity: 0;
+            transition: opacity 0.15s;
+        }
+
+        .session-card:hover {
+            border-color: var(--gold);
+            box-shadow: var(--shadow-md);
+            transform: translateY(-2px);
+        }
+
+        .session-card:hover::before { opacity: 1; }
+
+        .session-card h3 {
+            font-family: 'Rajdhani', sans-serif;
+            font-weight: 700;
+            font-size: 16px;
+            color: var(--ink);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            letter-spacing: 0.3px;
+        }
+
+        .session-card .date {
+            font-size: 12px;
+            color: var(--ink-xlight);
+        }
+
+        .session-card-actions {
+            display: flex;
+            justify-content: flex-end;
+            margin-top: 4px;
+        }
+
+        .delete-session-btn {
+            background: transparent;
+            color: var(--ink-xlight);
+            border: 1px solid var(--border);
+            padding: 4px 10px;
+            border-radius: var(--radius-sm);
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.12s;
+        }
+
+        .delete-session-btn:hover {
+            background: var(--red-bg);
+            color: var(--red);
+            border-color: var(--red);
+        }
+
+        /* ── NOTE CONTAINER ── */
+        .note-container {
+            background: var(--surface);
+            border-radius: var(--radius-lg);
+            border: 1px solid var(--border);
+            margin-bottom: 16px;
+            box-shadow: var(--shadow-sm);
+            overflow: hidden;
+        }
+
+        .container-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 16px;
+            background: var(--surface-2);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .container-header-label {
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 1px;
+            color: var(--ink-xlight);
+            text-transform: uppercase;
+            white-space: nowrap;
+        }
+
+        .container-header input[type="text"] {
+            font-family: 'Rajdhani', sans-serif;
+            font-size: 15px;
+            font-weight: 700;
+            padding: 5px 10px;
+            border: 1.5px solid var(--border);
+            border-radius: var(--radius-sm);
+            flex: 1;
+            color: var(--navy-light);
+            background: var(--surface);
+            transition: all 0.12s;
+            letter-spacing: 0.3px;
+        }
+
+        .container-header input[type="text"]:focus {
+            outline: none;
+            border-color: var(--gold);
+            box-shadow: 0 0 0 3px rgba(200,155,60,0.10);
+        }
+
+        .delete-round-btn {
+            margin-left: auto;
+            background: transparent;
+            color: var(--ink-xlight);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 5px 10px;
+            cursor: pointer;
+            font-size: 11px;
+            font-weight: 600;
+            transition: all 0.12s;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+
+        .delete-round-btn:hover {
+            background: var(--red-bg);
+            color: var(--red);
+            border-color: var(--red);
+        }
+
+        /* ── BLOCKS ── */
+        .block-list {
+            display: flex;
+            flex-direction: column;
+            gap: 1px;
+            padding: 12px;
+            gap: 10px;
+        }
+
+        .block-item {
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            overflow: hidden;
+            transition: border-color 0.12s;
+            background: var(--surface);
+        }
+
+        .block-item:focus-within {
+            border-color: var(--gold);
+            box-shadow: 0 0 0 3px rgba(200,155,60,0.08);
+        }
+
+        .block-item.type-good { border-left: 3px solid var(--green); }
+        .block-item.type-bad { border-left: 3px solid var(--red); }
+
+        .block-toolbar {
+            background: var(--surface-2);
+            padding: 6px 10px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--ink-light);
+            letter-spacing: 0.3px;
+        }
+
+        .block-actions {
+            margin-left: auto;
+            display: flex;
+            gap: 4px;
+        }
+
+        .action-btn {
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            cursor: pointer;
+            padding: 2px 7px;
+            color: var(--ink-light);
+            font-size: 11px;
+            transition: all 0.1s;
+        }
+
+        .action-btn:hover { background: var(--surface-3); color: var(--ink); }
+
+        .action-btn.delete {
+            color: var(--red);
+            border-color: rgba(192,57,43,0.25);
+        }
+
+        .action-btn.delete:hover {
+            background: var(--red-bg);
+            border-color: var(--red);
+        }
+
+        .block-content { padding: 12px; }
+
+        .rich-editor {
+            width: 100%;
+            min-height: 72px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 10px 12px;
+            font-family: 'Noto Sans JP', sans-serif;
+            font-size: 13.5px;
+            background: var(--surface);
+            overflow-y: auto;
+            cursor: text;
+            line-height: 1.7;
+            color: var(--ink);
+            transition: border-color 0.12s;
+        }
+
+        .rich-editor:empty:before {
+            content: attr(placeholder);
+            color: var(--ink-xlight);
+            pointer-events: none;
+        }
+
+        .rich-editor:focus {
+            outline: none;
+            border-color: var(--gold);
+            background: var(--surface);
+        }
+
+        .inline-icon {
+            width: 24px;
+            height: 24px;
+            vertical-align: middle;
+            border-radius: 4px;
+            margin: 0 3px;
+            border: 1px solid var(--border);
+        }
+
+        /* ── ADD BLOCK TOOLBAR ── */
+        .add-block-bar {
+            display: flex;
+            gap: 6px;
+            padding: 10px 12px;
+            border-top: 1px solid var(--border);
+            background: var(--surface-2);
+        }
+
+        .add-block-btn {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 5px 11px;
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--ink-mid);
+            cursor: pointer;
+            transition: all 0.12s;
+        }
+
+        .add-block-btn:hover {
+            border-color: var(--gold);
+            color: var(--gold-dim);
+            background: var(--gold-pale);
+        }
+
+        /* ── IMAGE BLOCK ── */
+        .image-upload-area {
+            border: 2px dashed var(--border-strong);
+            border-radius: var(--radius-sm);
+            padding: 28px;
+            text-align: center;
+            color: var(--ink-xlight);
+            background: var(--surface-2);
+            font-size: 13px;
+        }
+
+        .image-preview { display: flex; justify-content: center; }
+        .image-preview img { max-width: 100%; max-height: 300px; border-radius: var(--radius-sm); border: 1px solid var(--border); }
+
+        /* ── WHITEBOARD ── */
+        .wb-toolbar-wrapper { display: flex; flex-direction: column; gap: 10px; margin-bottom: 10px; }
+        .wb-colors { display: flex; gap: 6px; align-items: center; }
+        .wb-color-btn { width: 24px; height: 24px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; transition: 0.1s; }
+        .wb-color-btn.active { border-color: var(--ink); box-shadow: 0 0 0 2px white inset; }
+        .wb-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+        .wb-action-btn {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 5px 10px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--ink-mid);
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            transition: all 0.12s;
+        }
+        .wb-action-btn:hover { background: var(--surface-3); color: var(--ink); }
+        .wb-action-btn.active { background: var(--gold-pale); border-color: var(--gold); color: var(--gold-dim); }
+        .wb-action-btn.primary { background: var(--navy); color: var(--gold-light); border-color: var(--navy); }
+        .wb-action-btn.primary:hover { background: var(--navy-light); }
+        .wb-canvas-container { border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; position: relative; }
+        canvas.whiteboard { width: 100%; aspect-ratio: 16/9; height: auto; cursor: crosshair; display: block; }
+
+        /* ── ASSET DRAWER ── */
+        .asset-drawer {
+            position: fixed;
+            top: 0;
+            right: -340px;
+            width: 340px;
+            height: 100vh;
+            background: var(--surface);
+            border-left: 1px solid var(--border);
+            box-shadow: var(--shadow-lg);
+            z-index: 200;
+            transition: right 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .asset-drawer.open { right: 0; }
+
+        .drawer-header {
+            padding: 14px 18px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: var(--navy);
+        }
+
+        .drawer-header h3 {
+            color: var(--gold-light);
+            font-family: 'Rajdhani', sans-serif;
+            font-weight: 700;
+            font-size: 15px;
+            letter-spacing: 0.5px;
+        }
+
+        .close-drawer-btn {
+            background: rgba(255,255,255,0.1);
+            border: 1px solid rgba(255,255,255,0.15);
+            color: rgba(255,255,255,0.7);
+            width: 28px;
+            height: 28px;
+            border-radius: 6px;
+            font-size: 16px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.12s;
+        }
+
+        .close-drawer-btn:hover { background: rgba(255,255,255,0.2); color: white; }
+
+        .drawer-tabs {
+            display: flex;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .drawer-tab {
+            flex: 1;
+            padding: 10px 0;
+            border: none;
+            background: var(--surface-2);
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--ink-light);
+            border-bottom: 2px solid transparent;
+            transition: all 0.12s;
+            letter-spacing: 0.3px;
+        }
+
+        .drawer-tab.active {
+            background: var(--surface);
+            border-color: var(--gold);
+            color: var(--gold-dim);
+        }
+
+        .drawer-content {
+            padding: 14px;
+            overflow-y: auto;
+            flex: 1;
+            display: none;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
+            align-content: start;
+        }
+
+        .drawer-content.active { display: grid; }
+
+        .asset-icon {
+            width: 100%;
+            aspect-ratio: 1;
+            border-radius: var(--radius-sm);
+            cursor: grab;
+            border: 2px solid transparent;
+            object-fit: cover;
+            transition: all 0.1s;
+            background: var(--surface-3);
+        }
+
+        .asset-icon:hover { border-color: var(--gold); transform: scale(1.06); box-shadow: var(--shadow-md); }
+        .asset-icon:active { cursor: grabbing; transform: scale(0.95); }
+
+        /* ── SUMMARY / REPORT ── */
+        .summary-view {
+            background: var(--surface);
+            border-radius: var(--radius-lg);
+            border: 1px solid var(--border);
+            padding: 28px 32px;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .summary-stage { margin-bottom: 36px; }
+        .summary-title {
+            font-family: 'Rajdhani', sans-serif;
+            font-weight: 700;
+            font-size: 18px;
+            letter-spacing: 1px;
+            color: var(--navy-light);
+            border-bottom: 2px solid var(--border);
+            padding-bottom: 8px;
+            margin-bottom: 18px;
+        }
+
+        .summary-container { margin-bottom: 24px; padding-left: 14px; border-left: 3px solid var(--gold); }
+        .sum-block { margin-bottom: 14px; }
+        .sum-text { font-size: 14px; line-height: 1.7; white-space: pre-wrap; color: var(--ink); }
+        .sum-text.good { color: var(--green); padding: 10px 14px; background: var(--green-bg); border-radius: var(--radius-sm); }
+        .sum-text.bad { color: var(--red); padding: 10px 14px; background: var(--red-bg); border-radius: var(--radius-sm); }
+        .sum-img { max-width: 100%; border-radius: var(--radius-sm); border: 1px solid var(--border); }
+
+        .print-btn {
+            background: var(--navy);
+            color: var(--gold-light);
+            border: none;
+            padding: 9px 18px;
+            border-radius: var(--radius-sm);
+            font-family: 'Rajdhani', sans-serif;
+            font-weight: 700;
+            font-size: 14px;
+            cursor: pointer;
+            margin-bottom: 18px;
+            letter-spacing: 0.5px;
+            transition: all 0.15s;
+        }
+
+        .print-btn:hover { background: var(--navy-light); }
+
+        /* ── EMPTY STATE ── */
+        .empty-state {
+            text-align: center;
+            padding: 48px 20px;
+            color: var(--ink-xlight);
+            font-size: 13px;
+        }
+
+        .empty-state .emoji { font-size: 32px; margin-bottom: 12px; }
+
+        @media print {
+            body { background: white; overflow: visible; height: auto; }
+            .app-header, .sidebar, .print-btn, .asset-drawer { display: none !important; }
+            .main-content { padding: 0; overflow: visible; background: white; }
+            .summary-view { box-shadow: none; border: none; padding: 0; }
+        }
+    </style>
 </head>
 <body>
-<div id="root"></div>
 
-<!-- データセット（app.js より前に読み込む） -->
-<!-- champions / items は純粋なデータなので通常スクリプト -->
-<script src="data-champions.js"></script>
-<script src="data-items.js"></script>
-<script src="data-encounters.js"></script>
-<!-- augments は内部に JSX を含むため Babel で変換 -->
-<script type="text/babel" src="data-augments.js"></script>
+    <header class="app-header">
+        <div class="header-logo">
+            <div class="header-logo-mark">TFT</div>
+            <span class="header-logo-text">COACHING NOTES</span>
+        </div>
+        <div class="header-links">
+            <a href="https://metatft.com/" target="_blank" class="link-btn">
+                <img src="https://metatft.com/favicon.ico" alt="MetaTFT"> MetaTFT
+            </a>
+            <a href="https://tftips.app/" target="_blank" class="link-btn">
+                <img src="https://tftips.app/favicon.ico" alt="TFTips"> TFTips
+            </a>
+        </div>
+        <div id="header-actions" class="header-actions">
+            <button class="header-btn btn-ghost" onclick="toggleDrawer()">🎒 アセット</button>
+            <button class="header-btn btn-primary" onclick="addRound()">＋ 枠を追加</button>
+        </div>
+    </header>
 
-<!-- アプリ本体（JSX を含むため Babel で変換） -->
-<script type="text/babel" src="app.js"></script>
+    <div class="app-container">
+        <div class="sidebar">
+            <button id="home-btn" class="stage-btn home-btn active" onclick="showHome()">🏠 ホーム (履歴)</button>
+
+            <div class="sidebar-section-label">ステージ</div>
+            <div id="stage-list"></div>
+
+            <div class="sidebar-footer">
+                <button id="summary-btn" class="stage-btn summary-btn" onclick="showSummary()">📝 レポート出力</button>
+            </div>
+        </div>
+
+        <div class="main-content" id="main-content"></div>
+    </div>
+
+    <div id="asset-drawer" class="asset-drawer">
+        <div class="drawer-header">
+            <h3>🎒 アセットパネル</h3>
+            <button class="close-drawer-btn" onclick="toggleDrawer()">×</button>
+        </div>
+        <div class="drawer-tabs">
+            <button class="drawer-tab active" onclick="switchDrawerTab('champ', this)">駒</button>
+            <button class="drawer-tab" onclick="switchDrawerTab('item', this)">アイテム</button>
+            <button class="drawer-tab" onclick="switchDrawerTab('aug', this)">オーグメント</button>
+        </div>
+        <div id="drawer-champ" class="drawer-content active"></div>
+        <div id="drawer-item" class="drawer-content"></div>
+        <div id="drawer-aug" class="drawer-content"></div>
+    </div>
+
+    <script>
+        const stages = ['Stage 1', 'Stage 2', 'Stage 3', 'Stage 4', 'Stage 5', 'Stage 6', 'Stage 7'];
+        let currentStage = 'Home';
+        let appData = { sessions: {}, currentId: null };
+        let db = {};
+
+        const genId = () => 'id_' + Date.now() + Math.random().toString(36).substr(2, 9);
+        function createBlock(type) { return { id: genId(), type: type, content: null }; }
+        function createRound(name) { return { id: genId(), name: name, blocks: [createBlock('text')] }; }
+
+        function createInitialDB() {
+            let newDb = {};
+            stages.forEach(s => newDb[s] = []);
+            newDb['Stage 2'].push(createRound('ステージ2 全体方針'));
+            newDb['Stage 3'].push(createRound('3-2'));
+            return newDb;
+        }
+
+        function saveToLocal() { localStorage.setItem('tftCoachingData_v4', JSON.stringify(appData)); }
+
+        function loadFromLocal() {
+            const savedV4 = localStorage.getItem('tftCoachingData_v4');
+            if (savedV4) {
+                appData = JSON.parse(savedV4);
+            } else {
+                const savedV3 = localStorage.getItem('tftCoachingData_v3');
+                const newId = genId();
+                appData = {
+                    sessions: {
+                        [newId]: {
+                            id: newId,
+                            title: '過去のコーチングノート',
+                            date: new Date().toISOString(),
+                            data: savedV3 ? JSON.parse(savedV3) : createInitialDB()
+                        }
+                    },
+                    currentId: newId
+                };
+                saveToLocal();
+            }
+            if (appData.currentId && appData.sessions[appData.currentId]) {
+                db = appData.sessions[appData.currentId].data;
+            }
+        }
+
+        function formatDate(isoString) {
+            const d = new Date(isoString);
+            return `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+        }
+
+        function createNewSession() {
+            const id = genId();
+            appData.sessions[id] = { id, title: '新規コーチングノート', date: new Date().toISOString(), data: createInitialDB() };
+            loadSession(id);
+        }
+
+        function loadSession(id) {
+            appData.currentId = id;
+            db = appData.sessions[id].data;
+            currentStage = 'Stage 2';
+            saveToLocal();
+            renderSidebar();
+            renderMainArea();
+        }
+
+        function deleteSession(e, id) {
+            e.stopPropagation();
+            if (confirm('このコーチングノートを完全に削除しますか？')) {
+                delete appData.sessions[id];
+                if (appData.currentId === id) appData.currentId = null;
+                saveToLocal();
+                showHome();
+            }
+        }
+
+        function updateSessionTitle(title) {
+            if (appData.currentId) { appData.sessions[appData.currentId].title = title; saveToLocal(); }
+        }
+
+        const assetData = {
+            champ: [
+                'https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/champion-icons/51.png',
+                'https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/champion-icons/25.png',
+                'https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/champion-icons/17.png',
+                'https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/champion-icons/360.png',
+                'https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/champion-icons/103.png'
+            ],
+            item: [
+                'https://raw.communitydragon.org/latest/game/assets/maps/particles/tft/item_icons/standard/bf_sword.png',
+                'https://raw.communitydragon.org/latest/game/assets/maps/particles/tft/item_icons/standard/tear_of_the_goddess.png',
+                'https://raw.communitydragon.org/latest/game/assets/maps/particles/tft/item_icons/standard/infinity_edge.png',
+                'https://raw.communitydragon.org/latest/game/assets/maps/particles/tft/item_icons/standard/spear_of_shojin.png'
+            ],
+            aug: [
+                'https://raw.communitydragon.org/latest/game/assets/maps/particles/tft/item_icons/augments/hexcore/tier1.png',
+                'https://raw.communitydragon.org/latest/game/assets/maps/particles/tft/item_icons/augments/hexcore/tier2.png',
+                'https://raw.communitydragon.org/latest/game/assets/maps/particles/tft/item_icons/augments/hexcore/tier3.png'
+            ]
+        };
+
+        const iconDict = {
+            'ケイトリン': assetData.champ[0], 'けいとりん': assetData.champ[0],
+            'モルガナ': assetData.champ[1], 'もるがな': assetData.champ[1],
+            'ティーモ': assetData.champ[2], 'てぃーも': assetData.champ[2],
+            'サミーラ': assetData.champ[3], 'さみーら': assetData.champ[3],
+            'アーリ': assetData.champ[4], 'あーり': assetData.champ[4],
+            'bf': assetData.item[0], 'BF': assetData.item[0], '剣': assetData.item[0],
+            '涙': assetData.item[1], 'なみだ': assetData.item[1],
+            'ie': assetData.item[2], 'IE': assetData.item[2],
+            'ショウジン': assetData.item[3], 'しょうじん': assetData.item[3]
+        };
+
+        let isComposing = false;
+        document.addEventListener('compositionstart', () => isComposing = true);
+        document.addEventListener('compositionend', () => isComposing = false);
+
+        function handleRichTextInput(e, editorEle, roundId, blockId) {
+            if (isComposing) return;
+            const selection = window.getSelection();
+            if (!selection.rangeCount) return;
+            const range = selection.getRangeAt(0);
+            const node = range.startContainer;
+            if (node.nodeType === Node.TEXT_NODE) {
+                let text = node.textContent;
+                let cursorOffset = range.startOffset;
+                const textBeforeCursor = text.substring(0, cursorOffset);
+                for (let key in iconDict) {
+                    if (textBeforeCursor.endsWith(key)) {
+                        const url = iconDict[key];
+                        const textAfterCursor = text.substring(cursorOffset);
+                        const newTextBefore = textBeforeCursor.substring(0, textBeforeCursor.length - key.length);
+                        node.textContent = newTextBefore;
+                        const img = document.createElement('img');
+                        img.src = url; img.className = 'inline-icon'; img.alt = key;
+                        const afterTextNode = document.createTextNode(textAfterCursor);
+                        node.parentNode.insertBefore(img, node.nextSibling);
+                        node.parentNode.insertBefore(afterTextNode, img.nextSibling);
+                        const newRange = document.createRange();
+                        newRange.setStart(afterTextNode, 0); newRange.collapse(true);
+                        selection.removeAllRanges(); selection.addRange(newRange);
+                        break;
+                    }
+                }
+            }
+            updateBlockContent(roundId, blockId, editorEle.innerHTML);
+        }
+
+        function toggleDrawer() { document.getElementById('asset-drawer').classList.toggle('open'); }
+
+        function switchDrawerTab(tabId, btn) {
+            document.querySelectorAll('.drawer-tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.drawer-content').forEach(c => c.classList.remove('active'));
+            btn.classList.add('active');
+            document.getElementById(`drawer-${tabId}`).classList.add('active');
+        }
+
+        function renderDrawerAssets() {
+            Object.keys(assetData).forEach(type => {
+                const container = document.getElementById(`drawer-${type}`);
+                container.innerHTML = assetData[type].map(url => `<img src="${url}" class="asset-icon" draggable="true" ondragstart="handleDragStart(event, '${url}')" alt="asset">`).join('');
+            });
+        }
+
+        function handleDragStart(e, url) {
+            e.dataTransfer.setData('text/html', `<img src="${url}" class="inline-icon" alt="icon">`);
+            e.dataTransfer.setData('text/plain', url);
+        }
+
+        function addBlock(roundId, blockType) {
+            const round = db[currentStage].find(r => r.id === roundId);
+            if (round) round.blocks.push(createBlock(blockType));
+            saveToLocal(); renderMainArea();
+            setTimeout(() => { const mc = document.getElementById('main-content'); mc.scrollTo({ top: mc.scrollHeight, behavior: 'smooth' }); }, 100);
+        }
+
+        function deleteBlock(roundId, blockId) {
+            db[currentStage].find(r => r.id === roundId).blocks = db[currentStage].find(r => r.id === roundId).blocks.filter(b => b.id !== blockId);
+            saveToLocal(); renderMainArea();
+        }
+
+        function moveBlock(roundId, blockId, direction) {
+            let arr = db[currentStage].find(r => r.id === roundId).blocks;
+            const idx = arr.findIndex(b => b.id === blockId);
+            if (idx < 0) return;
+            if (direction === 'up' && idx > 0) [arr[idx-1], arr[idx]] = [arr[idx], arr[idx-1]];
+            else if (direction === 'down' && idx < arr.length - 1) [arr[idx+1], arr[idx]] = [arr[idx], arr[idx+1]];
+            saveToLocal(); renderMainArea();
+        }
+
+        function updateBlockContent(roundId, blockId, content) {
+            const round = db[currentStage].find(r => r.id === roundId);
+            if (round) { const block = round.blocks.find(b => b.id === blockId); if (block) { block.content = content; saveToLocal(); } }
+        }
+
+        function addRound() {
+            db[currentStage].push(createRound(''));
+            saveToLocal(); renderMainArea();
+            setTimeout(() => { const mc = document.getElementById('main-content'); mc.scrollTo({ top: mc.scrollHeight, behavior: 'smooth' }); }, 100);
+        }
+
+        function deleteRound(roundId) {
+            if (confirm('この枠を削除しますか？')) { db[currentStage] = db[currentStage].filter(r => r.id !== roundId); saveToLocal(); renderMainArea(); }
+        }
+
+        function updateRoundName(roundId, name) {
+            const round = db[currentStage].find(r => r.id === roundId);
+            if (round) { round.name = name; saveToLocal(); }
+        }
+
+        function handleImageUpload(e, roundId, blockId) {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(evt) { updateBlockContent(roundId, blockId, evt.target.result); renderMainArea(); }
+                reader.readAsDataURL(file);
+            }
+        }
+
+        let canvases = {};
+        const wbColors = ['#1C2333', '#C0392B', '#185FA5', '#1A8A5A', '#E0A020', '#E17055', '#6c5ce7', '#fd79a8', '#00cec9', '#A8B3CC'];
+
+        function initWhiteboards() {
+            if (currentStage === 'Home' || currentStage === 'Summary') return;
+            document.querySelectorAll('.whiteboard').forEach(canvas => {
+                if (canvas.dataset.initialized) return;
+                const blockId = canvas.dataset.blockId; const roundId = canvas.dataset.roundId; const ctx = canvas.getContext('2d');
+                canvas.width = 1280; canvas.height = 720; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+                const block = db[currentStage].find(r => r.id === roundId).blocks.find(b => b.id === blockId);
+                canvases[blockId] = { canvas, ctx, isDrawing: false, color: '#C0392B', isEraser: false, roundId, blockId, undoStack: [], redoStack: [] };
+                if (block && block.content) {
+                    let img = new Image(); img.onload = () => { ctx.drawImage(img, 0, 0); saveWbState(blockId); }; img.src = block.content;
+                } else { ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, canvas.width, canvas.height); saveWbState(blockId); }
+                canvas.addEventListener('mousedown', (e) => startDraw(e, blockId));
+                canvas.addEventListener('mousemove', (e) => draw(e, blockId));
+                canvas.addEventListener('mouseup', () => stopDraw(blockId));
+                canvas.addEventListener('mouseout', () => stopDraw(blockId));
+                canvas.addEventListener('touchstart', (e) => { e.preventDefault(); startDraw(e.touches[0], blockId); }, {passive: false});
+                canvas.addEventListener('touchmove', (e) => { e.preventDefault(); draw(e.touches[0], blockId); }, {passive: false});
+                canvas.addEventListener('touchend', () => stopDraw(blockId));
+                canvas.dataset.initialized = "true"; updateWbUI(blockId);
+            });
+        }
+
+        function saveWbState(id) { const cvs = canvases[id]; if (cvs.undoStack.length >= 20) cvs.undoStack.shift(); cvs.undoStack.push(cvs.canvas.toDataURL()); cvs.redoStack = []; }
+
+        window.handleWbBgUpload = function(e, roundId, blockId) {
+            const file = e.target.files[0]; if (!file) return; const reader = new FileReader();
+            reader.onload = function(evt) {
+                const img = new Image();
+                img.onload = function() {
+                    const cvs = canvases[blockId]; cvs.ctx.fillStyle = '#ffffff'; cvs.ctx.fillRect(0, 0, cvs.canvas.width, cvs.canvas.height);
+                    const ratio = Math.min(cvs.canvas.width / img.width, cvs.canvas.height / img.height);
+                    cvs.ctx.drawImage(img, 0, 0, img.width, img.height, (cvs.canvas.width - img.width * ratio) / 2, (cvs.canvas.height - img.height * ratio) / 2, img.width * ratio, img.height * ratio);
+                    saveWbState(blockId); updateBlockContent(roundId, blockId, cvs.undoStack[cvs.undoStack.length - 1]);
+                }
+                img.src = evt.target.result;
+            }
+            reader.readAsDataURL(file); e.target.value = '';
+        }
+
+        function getMousePos(canvas, evt) { const rect = canvas.getBoundingClientRect(); return { x: (evt.clientX - rect.left) * (canvas.width / rect.width), y: (evt.clientY - rect.top) * (canvas.height / rect.height) }; }
+        function startDraw(e, id) { canvases[id].isDrawing = true; canvases[id].ctx.beginPath(); draw(e, id); }
+        function draw(e, id) {
+            const cvs = canvases[id]; if (!cvs.isDrawing) return; const pos = getMousePos(cvs.canvas, e);
+            cvs.ctx.strokeStyle = cvs.isEraser ? '#ffffff' : cvs.color; cvs.ctx.lineWidth = cvs.isEraser ? 40 : 5;
+            cvs.ctx.lineTo(pos.x, pos.y); cvs.ctx.stroke(); cvs.ctx.beginPath(); cvs.ctx.moveTo(pos.x, pos.y);
+        }
+        function stopDraw(id) { const cvs = canvases[id]; if (!cvs.isDrawing) return; cvs.isDrawing = false; cvs.ctx.beginPath(); saveWbState(id); updateBlockContent(cvs.roundId, cvs.blockId, cvs.undoStack[cvs.undoStack.length - 1]); }
+        window.setWbColor = function(blockId, color) { canvases[blockId].color = color; canvases[blockId].isEraser = false; updateWbUI(blockId); }
+        window.setWbEraser = function(blockId) { canvases[blockId].isEraser = true; updateWbUI(blockId); }
+        window.wbUndo = function(id) {
+            const cvs = canvases[id];
+            if (cvs.undoStack.length > 1) {
+                cvs.redoStack.push(cvs.undoStack.pop()); const prevState = cvs.undoStack[cvs.undoStack.length - 1];
+                const img = new Image(); img.onload = () => { cvs.ctx.clearRect(0, 0, cvs.canvas.width, cvs.canvas.height); cvs.ctx.drawImage(img, 0, 0); };
+                img.src = prevState; updateBlockContent(cvs.roundId, cvs.blockId, prevState);
+            }
+        }
+        window.wbRedo = function(id) {
+            const cvs = canvases[id];
+            if (cvs.redoStack.length > 0) {
+                const nextState = cvs.redoStack.pop(); cvs.undoStack.push(nextState);
+                const img = new Image(); img.onload = () => { cvs.ctx.clearRect(0, 0, cvs.canvas.width, cvs.canvas.height); cvs.ctx.drawImage(img, 0, 0); };
+                img.src = nextState; updateBlockContent(cvs.roundId, cvs.blockId, nextState);
+            }
+        }
+        window.clearWb = function(blockId) {
+            if (confirm('白紙に戻しますか？')) {
+                const cvs = canvases[blockId]; cvs.ctx.fillStyle = '#ffffff'; cvs.ctx.fillRect(0, 0, cvs.canvas.width, cvs.canvas.height);
+                saveWbState(blockId); updateBlockContent(cvs.roundId, blockId, cvs.undoStack[cvs.undoStack.length - 1]);
+            }
+        }
+        function updateWbUI(blockId) {
+            const cvs = canvases[blockId]; if (!cvs) return;
+            document.querySelectorAll(`.color-btn-${blockId}`).forEach(btn => { btn.classList.remove('active'); if (!cvs.isEraser && btn.dataset.color === cvs.color) btn.classList.add('active'); });
+            const eraserBtn = document.getElementById(`eraser-${blockId}`); if (eraserBtn) { if (cvs.isEraser) eraserBtn.classList.add('active'); else eraserBtn.classList.remove('active'); }
+        }
+
+        function getBlockLabel(type) {
+            if (type === 'text') return '📝 テキスト';
+            if (type === 'good') return '✅ Good';
+            if (type === 'bad') return '❌ Bad / Next';
+            if (type === 'image') return '📷 画像';
+            if (type === 'whiteboard') return '🖌️ スクショ＆手書き';
+            return '';
+        }
+
+        function generateBlockHTML(block, roundId) {
+            const pId = `'${roundId}', '${block.id}'`;
+            let contentHTML = '';
+
+            if (block.type === 'text' || block.type === 'good' || block.type === 'bad') {
+                contentHTML = `<div class="rich-editor" contenteditable="true" placeholder="メモを入力... (例: けいとりん と打つとアイコンになります)"
+                    oninput="handleRichTextInput(event, this, ${pId})" onkeyup="handleRichTextInput(event, this, ${pId})"
+                    ondrop="setTimeout(()=>updateBlockContent(${pId}, this.innerHTML), 100)">${block.content || ''}</div>`;
+            } else if (block.type === 'image') {
+                contentHTML = block.content
+                    ? `<div class="image-preview"><img src="${block.content}" alt="Image"></div><div style="margin-top:10px;text-align:center;"><input type="file" accept="image/*" onchange="handleImageUpload(event, ${pId})"></div>`
+                    : `<div class="image-upload-area"><input type="file" accept="image/*" onchange="handleImageUpload(event, ${pId})"><p style="margin-top:8px;">画像を選択してください</p></div>`;
+            } else if (block.type === 'whiteboard') {
+                let colorBtns = wbColors.map(color => `<button class="wb-color-btn color-btn-${block.id}" data-color="${color}" style="background:${color};" onclick="setWbColor('${block.id}', '${color}')"></button>`).join('');
+                contentHTML = `<div class="wb-toolbar-wrapper">
+                    <div class="wb-actions">
+                        <label class="wb-action-btn primary" style="cursor:pointer;">🖼️ 背景を読み込む<input type="file" accept="image/*" style="display:none;" onchange="handleWbBgUpload(event, ${pId})"></label>
+                        <button id="eraser-${block.id}" class="wb-action-btn" onclick="setWbEraser('${block.id}')">🧹 消しゴム</button>
+                        <button class="wb-action-btn" onclick="wbUndo('${block.id}')">↩ 戻る</button>
+                        <button class="wb-action-btn" onclick="wbRedo('${block.id}')">↪ 進む</button>
+                        <button class="wb-action-btn" onclick="clearWb('${block.id}')">🗑 白紙に戻す</button>
+                    </div>
+                    <div class="wb-colors">${colorBtns}</div>
+                </div>
+                <div class="wb-canvas-container"><canvas class="whiteboard" data-block-id="${block.id}" data-round-id="${roundId}"></canvas></div>`;
+            }
+
+            return `
+            <div class="block-item type-${block.type}">
+                <div class="block-toolbar">
+                    <span>${getBlockLabel(block.type)}</span>
+                    <div class="block-actions">
+                        <button class="action-btn" onclick="moveBlock(${pId}, 'up')" title="上へ">↑</button>
+                        <button class="action-btn" onclick="moveBlock(${pId}, 'down')" title="下へ">↓</button>
+                        <button class="action-btn delete" onclick="deleteBlock(${pId})">×</button>
+                    </div>
+                </div>
+                <div class="block-content">${contentHTML}</div>
+            </div>`;
+        }
+
+        const mainContent = document.getElementById('main-content');
+        const headerActions = document.getElementById('header-actions');
+
+        function renderSidebar() {
+            const sidebar = document.querySelector('.sidebar');
+            const stageList = document.getElementById('stage-list');
+
+            if (currentStage === 'Home') {
+                sidebar.classList.add('hidden');
+                headerActions.classList.add('hidden');
+            } else {
+                sidebar.classList.remove('hidden');
+                headerActions.classList.remove('hidden');
+            }
+
+            stageList.innerHTML = '';
+            const homeBtn = document.getElementById('home-btn');
+            homeBtn.classList.toggle('active', currentStage === 'Home');
+
+            stages.forEach(stage => {
+                const btn = document.createElement('button');
+                btn.className = `stage-btn ${stage === currentStage ? 'active' : ''}`;
+                btn.innerText = stage;
+                btn.onclick = () => {
+                    if (appData.currentId) { currentStage = stage; renderSidebar(); renderMainArea(); }
+                    else { alert('まずはホーム画面からノートを選択するか、新しく作成してください。'); }
+                };
+                stageList.appendChild(btn);
+            });
+
+            const summaryBtn = document.getElementById('summary-btn');
+            summaryBtn.classList.toggle('active', currentStage === 'Summary');
+        }
+
+        function showHome() {
+            currentStage = 'Home';
+            renderSidebar();
+
+            const sortedSessions = Object.values(appData.sessions).sort((a, b) => new Date(b.date) - new Date(a.date));
+
+            let html = `<div class="home-view">
+                <div class="home-header">
+                    <h1 class="home-title">コーチング<span>ノート</span>履歴</h1>
+                    <button class="new-session-btn" onclick="createNewSession()">＋ 新規作成</button>
+                </div>
+                <div class="session-grid">`;
+
+            if (sortedSessions.length === 0) {
+                html += `<div class="empty-state"><div class="emoji">📋</div><p>保存されたノートがありません。<br>「＋ 新規作成」から始めましょう。</p></div>`;
+            } else {
+                sortedSessions.forEach(session => {
+                    html += `<div class="session-card" onclick="loadSession('${session.id}')">
+                        <h3>${session.title}</h3>
+                        <div class="date">作成日: ${formatDate(session.date)}</div>
+                        <div class="session-card-actions">
+                            <button class="delete-session-btn" onclick="deleteSession(event, '${session.id}')">削除</button>
+                        </div>
+                    </div>`;
+                });
+            }
+
+            html += `</div></div>`;
+            mainContent.innerHTML = html;
+        }
+
+        function renderMainArea() {
+            if (currentStage === 'Home' || currentStage === 'Summary') return;
+            if (!appData.currentId) { showHome(); return; }
+
+            const session = appData.sessions[appData.currentId];
+
+            let html = `<div class="main-header">
+                <input type="text" class="session-title-input" value="${session.title}" onchange="updateSessionTitle(this.value)" placeholder="ノートのタイトルを入力">
+                <div class="stage-badge">${currentStage}</div>
+            </div>`;
+
+            if (db[currentStage].length === 0) {
+                html += `<div class="empty-state"><div class="emoji">✏️</div><p>データがありません。<br>上の「＋ 枠を追加」ボタンを押して記録を始めましょう。</p></div>`;
+            }
+
+            db[currentStage].forEach(round => {
+                html += `<div class="note-container">
+                    <div class="container-header">
+                        <span class="container-header-label">見出し</span>
+                        <input type="text" value="${round.name}" onchange="updateRoundName('${round.id}', this.value)" placeholder="例：3-2, ステージ方針">
+                        <button class="delete-round-btn" onclick="deleteRound('${round.id}')">削除</button>
+                    </div>
+                    <div class="block-list">`;
+                round.blocks.forEach(b => html += generateBlockHTML(b, round.id));
+                html += `</div>
+                    <div class="add-block-bar">
+                        <button class="add-block-btn" onclick="addBlock('${round.id}', 'text')">＋ テキスト</button>
+                        <button class="add-block-btn" onclick="addBlock('${round.id}', 'good')">＋ Good</button>
+                        <button class="add-block-btn" onclick="addBlock('${round.id}', 'bad')">＋ Bad</button>
+                        <button class="add-block-btn" onclick="addBlock('${round.id}', 'image')">＋ 画像</button>
+                        <button class="add-block-btn" onclick="addBlock('${round.id}', 'whiteboard')">＋ 手書き</button>
+                    </div>
+                </div>`;
+            });
+
+            mainContent.innerHTML = html;
+            setTimeout(initWhiteboards, 0);
+        }
+
+        function showSummary() {
+            if (!appData.currentId) { alert('出力するノートを選択してください。'); return; }
+            currentStage = 'Summary';
+            renderSidebar();
+
+            const session = appData.sessions[appData.currentId];
+
+            let html = `<div class="main-header">
+                <div>
+                    <h1 style="font-family:'Rajdhani',sans-serif;font-weight:700;font-size:22px;letter-spacing:0.5px;color:var(--ink);">レポート出力</h1>
+                    <p style="margin-top:4px;color:var(--ink-light);font-size:13px;">${session.title}</p>
+                </div>
+            </div>
+            <button class="print-btn" onclick="window.print()">📄 PDFとして保存 / 印刷</button>
+            <div class="summary-view">`;
+
+            let hasData = false;
+            stages.forEach(stageName => {
+                let stageHTML = `<div class="summary-stage"><h2 class="summary-title">${stageName}</h2>`;
+                let hasStage = false;
+                db[stageName].forEach(round => {
+                    const valid = round.blocks.filter(b => b.content && b.content.trim() !== '' && b.content !== '<br>');
+                    if (valid.length > 0) {
+                        hasStage = true;
+                        stageHTML += `<div class="summary-container">`;
+                        if (round.name.trim()) stageHTML += `<h3 style="margin:0 0 12px;color:var(--ink);font-size:15px;font-weight:700;">${round.name}</h3>`;
+                        valid.forEach(b => {
+                            if (b.type === 'text') stageHTML += `<div class="sum-block sum-text">${b.content}</div>`;
+                            if (b.type === 'good') stageHTML += `<div class="sum-block sum-text good"><strong>✅ Good:</strong><br>${b.content}</div>`;
+                            if (b.type === 'bad') stageHTML += `<div class="sum-block sum-text bad"><strong>❌ Bad / Next:</strong><br>${b.content}</div>`;
+                            if (b.type === 'image' || b.type === 'whiteboard') stageHTML += `<div class="sum-block"><img src="${b.content}" class="sum-img"></div>`;
+                        });
+                        stageHTML += `</div>`;
+                    }
+                });
+                stageHTML += `</div>`;
+                if (hasStage) { hasData = true; html += stageHTML; }
+            });
+
+            if (!hasData) html += `<p style="color:var(--ink-xlight);">まだ記録されたフィードバックがありません。</p>`;
+            html += `</div>`;
+            mainContent.innerHTML = html;
+        }
+
+        loadFromLocal();
+        renderDrawerAssets();
+        showHome();
+    </script>
 </body>
 </html>
