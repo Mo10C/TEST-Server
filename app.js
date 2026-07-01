@@ -39,7 +39,12 @@ const DEFAULT_OVERRIDES = {
   stargazer: null,    // stargazerVariants の index
   psionic: null,      // [name(初手), name(2手目)]
   augmentTier: null,  // 'silver' | 'gold' | 'prismatic'
-  dropPlanIndex: null // DROP_PLANS の index
+  dropPlanIndex: null,// DROP_PLANS の index
+  // 🌟 チート：2-1で提示されるオーグメントを任意指定
+  //   { initial:[id|null,id|null,id|null], reroll:[id|null,id|null,id|null] }
+  //   initial = 最初に出る3枠 / reroll = 各枠を再抽選したとき最初に出る3枠。
+  //   null または各要素null＝その枠はランダム（従来通り）。ティアはまたいで指定可。
+  augmentPicks: null
 };
 const OVERRIDE_STORAGE_KEY = 'tft_set17_overrides_v1';
 function loadOverrides() {
@@ -824,7 +829,7 @@ const TierListDrawer = ({ isOpen, onClose, showMsg }) => {
 };
 
 /* ── オーグメント選択画面（操作ロック・スケール0.8版） ── */
-const AugmentScreen = ({ onPick, rng, augmentTierBoost = 0, isNoMoreAugments = false, forceTier = null, rerollBonus = 0 }) => {
+const AugmentScreen = ({ onPick, rng, augmentTierBoost = 0, isNoMoreAugments = false, forceTier = null, rerollBonus = 0, augmentPicks = null }) => {
   const maxRerolls = 1 + (rerollBonus || 0); // 各枠のリロール可能回数（タロンで+1）
   const [tier] = useState(() => {
     if (forceTier) return forceTier;          // 遭遇によるティア強制（TF=gold / シェン・モルガナ=prismatic）
@@ -851,6 +856,33 @@ const AugmentScreen = ({ onPick, rng, augmentTierBoost = 0, isNoMoreAugments = f
     for (let r = 0; r < maxRerolls; r++) {
       for (let s = 0; s < 3; s++) { if (drawn[k]) backups[s].push(drawn[k]); k++; }
     }
+
+    // 🌟 ============ チート：任意オーグメント指定で上書き ============
+    //   augmentPicks.initial[s] があれば初期のs枠を、reroll[s] があれば
+    //   s枠の「1回目のリロール結果」をそのオーグメントに固定する。
+    //   指定はティア横断（silver/gold/prismatic のどれからでも）で検索。
+    if (augmentPicks) {
+      const findAug = (id) => {
+        if (!id) return null;
+        for (const t of ['silver', 'gold', 'prismatic']) {
+          const found = (AUGMENTS_DATA[t] || []).find(a => a.id === id);
+          if (found) return found;
+        }
+        return null;
+      };
+      const initPicks = Array.isArray(augmentPicks.initial) ? augmentPicks.initial : [];
+      const rerollPicks = Array.isArray(augmentPicks.reroll) ? augmentPicks.reroll : [];
+      for (let s = 0; s < 3; s++) {
+        const ia = findAug(initPicks[s]);
+        if (ia) initial[s] = ia;
+        const ra = findAug(rerollPicks[s]);
+        if (ra) {                              // maxRerolls>=1 は常に成立（1+bonus）
+          if (backups[s].length === 0) backups[s].push(ra);
+          else backups[s][0] = ra;             // 1回目のリロール結果を固定
+        }
+      }
+    }
+
     return { initial, backups };
   });
 
@@ -984,6 +1016,142 @@ const AugmentScreen = ({ onPick, rng, augmentTierBoost = 0, isNoMoreAugments = f
   );
 };
 
+/* ── オーグメント指定 専用画面（設定から開く） ── */
+function AugmentPickerScreen({ augData, value, onChange, onBack }) {
+  const init   = Array.isArray(value.initial) ? value.initial : [null, null, null];
+  const reroll = Array.isArray(value.reroll)  ? value.reroll  : [null, null, null];
+  const [selected, setSelected] = useState({ kind: 'initial', idx: 0 }); // 編集中の枠
+  const [query, setQuery] = useState('');
+  const [tierFilter, setTierFilter] = useState('all');
+
+  const findAug = (id) => {
+    if (!id) return null;
+    for (const t of ['silver', 'gold', 'prismatic']) {
+      const f = (augData[t] || []).find(a => a.id === id);
+      if (f) return f;
+    }
+    return null;
+  };
+  const setSlot = (kind, idx, id) => {
+    const next = { initial: [...init], reroll: [...reroll] };
+    next[kind][idx] = id || null;
+    onChange(next);
+  };
+  const clearAll = () => onChange({ initial: [null, null, null], reroll: [null, null, null] });
+  const setCount = [...init, ...reroll].filter(Boolean).length;
+  const curId = selected.kind === 'initial' ? init[selected.idx] : reroll[selected.idx];
+
+  // ライブラリ（検索・ティア絞り込み）
+  const q = query.trim().toLowerCase();
+  const lib = [];
+  for (const t of ['silver', 'gold', 'prismatic']) {
+    if (tierFilter !== 'all' && tierFilter !== t) continue;
+    for (const a of (augData[t] || [])) {
+      if (q && !(a.name || '').toLowerCase().includes(q)) continue;
+      lib.push(a);
+    }
+  }
+
+  const slotCard = (kind, idx) => {
+    const id = kind === 'initial' ? init[idx] : reroll[idx];
+    const aug = findAug(id);
+    const active = selected.kind === kind && selected.idx === idx;
+    return (
+      <div key={kind + idx} onClick={() => setSelected({ kind, idx })}
+        style={{ position: 'relative', flex: '1 1 0', minWidth: 0, cursor: 'pointer', borderRadius: 12, padding: '12px 8px',
+          border: `2px solid ${active ? 'var(--blue)' : (aug ? TIER_COLORS[aug.tier] : 'var(--border)')}`,
+          background: active ? 'rgba(0,102,204,0.18)' : 'rgba(15,23,42,0.6)',
+          boxShadow: active ? '0 0 16px rgba(0,102,204,0.55)' : 'none',
+          display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, transition: 'all 0.12s' }}>
+        <div style={{ position: 'absolute', top: 6, left: 8, fontSize: 11, fontWeight: 900, color: active ? 'var(--blue)' : 'rgba(255,255,255,0.4)' }}>{idx + 1}</div>
+        <div style={{ width: 54, height: 54, borderRadius: 10, overflow: 'hidden', background: '#0b1622', display: 'flex', alignItems: 'center', justifyContent: 'center', border: `2px solid ${aug ? TIER_COLORS[aug.tier] : 'var(--border)'}` }}>
+          {aug && aug.imgName
+            ? <img src={getAugmentIconUrl(aug)} alt={aug.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => { e.target.style.display = 'none'; }} />
+            : <span style={{ fontSize: 24 }}>🎲</span>}
+        </div>
+        <div style={{ fontSize: 11, fontWeight: 700, color: aug ? '#fff' : 'rgba(255,255,255,0.5)', textAlign: 'center', lineHeight: 1.25, minHeight: 28, display: 'flex', alignItems: 'center' }}>{aug ? aug.name : 'ランダム'}</div>
+        {aug && (
+          <button onClick={(e) => { e.stopPropagation(); setSlot(kind, idx, null); }}
+            style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: 'rgba(220,53,69,0.5)', border: '1px solid var(--red)', borderRadius: 6, padding: '3px 8px', cursor: 'pointer' }}>× 解除</button>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14, padding: 16,
+      backgroundImage: `linear-gradient(rgba(0,0,0,0.82), rgba(0,0,0,0.82)), url("https://assets.st-note.com/production/uploads/images/263587712/rectangle_large_type_2_386d7257054746a6649e14bdb1432725.jpeg?width=4000&height=4000&fit=bounds&format=jpg&quality=90")`,
+      backgroundSize: 'cover', backgroundPosition: 'center', animation: 'fadeIn 0.4s ease' }}>
+      <div style={{ fontFamily: 'Orbitron', fontSize: 'clamp(18px,4vw,30px)', fontWeight: 900, color: '#fff', letterSpacing: 4, textShadow: '0 0 10px rgba(0,0,0,0.9), 0 0 18px var(--gold)', marginTop: 4 }}>🎯 オーグメントを指定</div>
+
+      <div style={{ width: 'min(760px, 96vw)', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 12, background: 'rgba(8,16,26,0.85)', border: '1px solid var(--border)', borderRadius: 16, padding: 16, boxShadow: '0 20px 60px rgba(0,0,0,0.6)' }}>
+
+        {/* スロット群 */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, flexShrink: 0 }}>
+          <div>
+            <div style={{ color: 'var(--gold2)', fontWeight: 900, fontSize: 12.5, marginBottom: 6 }}>最初に出る3枚</div>
+            <div style={{ display: 'flex', gap: 8 }}>{[0, 1, 2].map(i => slotCard('initial', i))}</div>
+          </div>
+          <div>
+            <div style={{ color: 'var(--gold2)', fontWeight: 900, fontSize: 12.5, marginBottom: 6 }}>リロールして出る3枚 <span style={{ color: 'rgba(255,255,255,0.45)', fontWeight: 400, fontSize: 11 }}>（各枠を1回再抽選したとき）</span></div>
+            <div style={{ display: 'flex', gap: 8 }}>{[0, 1, 2].map(i => slotCard('reroll', i))}</div>
+          </div>
+        </div>
+
+        {/* 編集中の案内 */}
+        <div style={{ fontSize: 12, fontWeight: 700, color: '#fff', textAlign: 'center', padding: '8px 10px', borderRadius: 8, background: 'rgba(0,102,204,0.2)', border: '1px solid var(--blue)', flexShrink: 0 }}>
+          いま編集中：<b style={{ color: 'var(--gold2)' }}>{selected.kind === 'initial' ? '最初' : 'リロール'}の{selected.idx + 1}枠目</b> ── 下の一覧から選ぶと設定されます
+        </div>
+
+        {/* 検索＋ティア絞り込み */}
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', flexShrink: 0 }}>
+          <input value={query} onChange={e => setQuery(e.target.value)} placeholder="名前で検索…"
+            style={{ flex: '1 1 160px', minWidth: 0, padding: '9px 12px', borderRadius: 8, background: 'rgba(15,23,42,0.9)', color: '#fff', border: '1px solid var(--border)', fontSize: 13, fontFamily: 'Noto Sans JP' }} />
+          {[{ v: 'all', l: '全て' }, { v: 'silver', l: 'シルバー' }, { v: 'gold', l: 'ゴールド' }, { v: 'prismatic', l: 'プリズム' }].map(t => (
+            <button key={t.v} onClick={() => setTierFilter(t.v)}
+              style={{ padding: '7px 11px', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                color: tierFilter === t.v ? '#08101a' : '#fff', background: tierFilter === t.v ? 'var(--gold2)' : 'rgba(255,255,255,0.06)', border: `1px solid ${tierFilter === t.v ? 'var(--gold2)' : 'var(--border)'}` }}>{t.l}</button>
+          ))}
+        </div>
+
+        {/* ライブラリ */}
+        <div style={{ flex: 1, minHeight: 80, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 10, padding: 10, background: 'rgba(15,23,42,0.4)' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(88px, 1fr))', gap: 8 }}>
+            {lib.map(a => {
+              const chosen = a.id === curId;
+              return (
+                <div key={a.id} onClick={() => setSlot(selected.kind, selected.idx, a.id)} title={a.desc || a.name}
+                  style={{ cursor: 'pointer', borderRadius: 8, padding: 6, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, textAlign: 'center',
+                    border: `2px solid ${chosen ? 'var(--blue)' : TIER_COLORS[a.tier]}`, background: chosen ? 'rgba(0,102,204,0.2)' : 'rgba(11,22,34,0.8)', transition: 'all 0.1s' }}>
+                  <div style={{ width: 40, height: 40, borderRadius: 7, overflow: 'hidden', background: '#0b1622', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    {a.imgName
+                      ? <img src={getAugmentIconUrl(a)} alt={a.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => { e.target.style.display = 'none'; }} />
+                      : <span>❔</span>}
+                  </div>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: '#fff', lineHeight: 1.2 }}>{a.name}</div>
+                </div>
+              );
+            })}
+            {lib.length === 0 && <div style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12, padding: 12 }}>該当なし</div>}
+          </div>
+        </div>
+
+        {/* フッター */}
+        <div style={{ display: 'flex', gap: 10, flexShrink: 0 }}>
+          <button onClick={clearAll} disabled={setCount === 0}
+            style={{ flex: '0 0 auto', padding: '11px 16px', borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: setCount === 0 ? 'default' : 'pointer',
+              color: '#fff', background: setCount === 0 ? 'rgba(80,20,20,0.35)' : 'rgba(80,20,20,0.7)', border: '1px solid var(--red)', opacity: setCount === 0 ? 0.5 : 1 }}>
+            ↺ 全部ランダムに戻す
+          </button>
+          <button onClick={onBack} className="menu-btn" style={{ flex: 1, background: 'var(--blue)', color: '#fff', borderColor: 'var(--blue)', fontWeight: 900 }}>
+            ✓ 設定に戻る（{setCount}/6 指定中）
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ── メインアプリ ── */
 /* ── メインアプリ ── */
 function SettingsScreen({ bindings, onChange, overrides = DEFAULT_OVERRIDES, onChangeOverrides = () => {}, onBack, onStartNewGame = null, backLabel = 'メニューに戻る' }) {
@@ -991,6 +1159,7 @@ function SettingsScreen({ bindings, onChange, overrides = DEFAULT_OVERRIDES, onC
   const [listening, setListening] = useState(null); // 入力待ち中のアクションID
   const [note, setNote] = useState('');
   const [ov, setOv] = useState(overrides);          // 🌟 ゲーム内設定のオーバーライド
+  const [augPickerOpen, setAugPickerOpen] = useState(false); // 🌟 オーグメント指定の別画面
 
   // 入力待ち中：次に押されたキーを割り当てる
   useEffect(() => {
@@ -1020,6 +1189,7 @@ function SettingsScreen({ bindings, onChange, overrides = DEFAULT_OVERRIDES, onC
   const gods    = (typeof GOD_DATA !== 'undefined' && Array.isArray(GOD_DATA)) ? GOD_DATA : [];
   const stars   = (typeof stargazerVariants !== 'undefined' && Array.isArray(stargazerVariants)) ? stargazerVariants : [];
   const psi     = (typeof PSIONIC_ITEMS !== 'undefined' && Array.isArray(PSIONIC_ITEMS)) ? PSIONIC_ITEMS : [];
+  const augData = (typeof AUGMENTS_DATA !== 'undefined' && AUGMENTS_DATA) ? AUGMENTS_DATA : { silver:[], gold:[], prismatic:[] };
 
   const TIER_JA = { silver:'シルバー', gold:'ゴールド', prismatic:'プリズム' };
   const setOvKey = (patch) => { const next = { ...ov, ...patch }; setOv(next); onChangeOverrides(next); };
@@ -1059,6 +1229,23 @@ function SettingsScreen({ bindings, onChange, overrides = DEFAULT_OVERRIDES, onC
     setOvKey({ psionic: (cur[0] || cur[1]) ? cur : null });
   };
 
+  // 🌟 ===== オーグメント指定（別画面ピッカーで設定） =====
+  const augPicks = (ov.augmentPicks && typeof ov.augmentPicks === 'object')
+    ? ov.augmentPicks
+    : { initial:[null,null,null], reroll:[null,null,null] };
+  const augInit = Array.isArray(augPicks.initial) ? augPicks.initial : [null,null,null];
+  const augRe   = Array.isArray(augPicks.reroll)  ? augPicks.reroll  : [null,null,null];
+  const augSetCount = [...augInit, ...augRe].filter(Boolean).length;
+  // ピッカー画面へ渡す現在値
+  const augPickerValue = {
+    initial: [ augInit[0]||null, augInit[1]||null, augInit[2]||null ],
+    reroll:  [ augRe[0]||null,   augRe[1]||null,   augRe[2]||null   ],
+  };
+  const applyAugPicks = (next) => {
+    const anySet = [...(next.initial||[]), ...(next.reroll||[])].some(Boolean);
+    setOvKey({ augmentPicks: anySet ? next : null });
+  };
+
   // スタイル
   const secTitle = { color:'#fff', fontWeight:900, fontSize:14, marginTop:22, marginBottom:10, borderTop:'1px solid var(--border)', paddingTop:16 };
   const fLabel = { color:'rgba(255,255,255,0.85)', fontWeight:700, fontSize:12.5, marginBottom:6 };
@@ -1068,6 +1255,18 @@ function SettingsScreen({ bindings, onChange, overrides = DEFAULT_OVERRIDES, onC
 
   const tierOpts = [ {v:null,l:'ランダム'}, {v:'silver',l:'シルバー'}, {v:'gold',l:'ゴールド'}, {v:'prismatic',l:'プリズム'} ];
   const effTier = forcedTier || ov.augmentTier || null;
+
+  // 🌟 オーグメント指定は専用の別画面で行う
+  if (augPickerOpen) {
+    return (
+      <AugmentPickerScreen
+        augData={augData}
+        value={augPickerValue}
+        onChange={applyAugPicks}
+        onBack={() => setAugPickerOpen(false)}
+      />
+    );
+  }
 
   return (
     <div style={{ height:'100vh', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:18, backgroundImage:`linear-gradient(rgba(0,0,0,0.78), rgba(0,0,0,0.78)), url("https://assets.st-note.com/production/uploads/images/263587712/rectangle_large_type_2_386d7257054746a6649e14bdb1432725.jpeg?width=4000&height=4000&fit=bounds&format=jpg&quality=90")`, backgroundSize:'cover', backgroundPosition:'center', padding:16, animation:'fadeIn 0.6s ease' }}>
@@ -1230,6 +1429,26 @@ function SettingsScreen({ bindings, onChange, overrides = DEFAULT_OVERRIDES, onC
             <option value="">ランダム</option>
             {DROP_PLANS.map((d, i) => (<option key={i} value={i}>{d.label}</option>))}
           </select>
+        </div>
+
+        {/* オーグメント指定（別画面ピッカー） */}
+        <div style={{ marginBottom:8 }}>
+          <div style={fLabel}>🎯 オーグメント指定 <span style={{ color:'rgba(255,255,255,0.45)', fontWeight:400 }}>（2-1の提示を固定）</span></div>
+          <button
+            onClick={() => setAugPickerOpen(true)}
+            style={{ width:'100%', padding:'13px 16px', borderRadius:10, cursor:'pointer', fontFamily:'Noto Sans JP', fontWeight:900, fontSize:13.5,
+              display:'flex', alignItems:'center', justifyContent:'center', gap:10, transition:'all 0.15s',
+              color: augSetCount>0 ? '#08101a' : '#fff',
+              background: augSetCount>0 ? 'var(--gold2)' : 'rgba(15,23,42,0.85)',
+              border:`2px solid ${augSetCount>0 ? 'var(--gold2)' : 'var(--blue)'}`,
+              boxShadow: augSetCount>0 ? '0 0 14px var(--gold)' : 'none' }}>
+            オーグメントを指定
+            <span style={{ fontSize:11, fontWeight:700, padding:'2px 8px', borderRadius:20,
+              background: augSetCount>0 ? 'rgba(8,16,26,0.25)' : 'rgba(255,255,255,0.12)',
+              color: augSetCount>0 ? '#08101a' : 'rgba(255,255,255,0.8)' }}>
+              {augSetCount>0 ? `${augSetCount}/6 指定中` : '未指定'}
+            </span>
+          </button>
         </div>
 
         <button className="menu-btn" style={{ width:'100%', marginTop:14, background:'rgba(80,20,20,0.7)', color:'#fff', borderColor:'var(--red)', fontSize:13 }} onClick={resetOverrides}>
@@ -3433,7 +3652,7 @@ const handleAugmentPick = (aug, historyContext) => {
 
 
       <TraitTooltip data={traitTooltipData} stargazerDesc={currentStargazerDesc} psionicItems={currentPsionicItems} arbiterRule={arbiterRule} />
-      {showAugment && !noMoreAugments && <AugmentScreen onPick={handleAugmentPick} rng={rngAug} augmentTierBoost={augmentTierBoost} forceTier={encounter?.augmentForceTier || (gameOverrides && gameOverrides.augmentTier) || null} rerollBonus={encounter?.augmentRerollBonus || 0} />}
+      {showAugment && !noMoreAugments && <AugmentScreen onPick={handleAugmentPick} rng={rngAug} augmentTierBoost={augmentTierBoost} forceTier={encounter?.augmentForceTier || (gameOverrides && gameOverrides.augmentTier) || null} rerollBonus={encounter?.augmentRerollBonus || 0} augmentPicks={gameOverrides && gameOverrides.augmentPicks} />}
       {dropMsg && <div style={{ position:'fixed', top:'15%', left:'50%', transform:'translateX(-50%)', background:'rgba(26,159,255,.9)', border:'1px solid white', borderRadius:10, padding:'10px 20px', zIndex:3000, fontFamily:'Noto Sans JP', fontSize:14, fontWeight:900, color:'white', textAlign:'center', maxWidth:'90%', boxShadow:'0 4px 20px rgba(0,0,0,0.3)' }}>{dropMsg}</div>}
       {mergeToast && <div style={{ position:'fixed', top:'25%', left:'50%', transform:'translateX(-50%)', background:'rgba(8,13,26,.97)', border:`1px solid ${STAR_COLORS[mergeToast.star]}`, borderRadius:12, padding:20, zIndex:4000, animation:'starUpAnim .4s ease', display:'flex', alignItems:'center', gap:15 }}><img src={boardIcon(mergeToast.img)} style={{ width:60, height:60, borderRadius:8, objectFit:'cover', border:`2px solid ${STAR_COLORS[mergeToast.star]}` }}/><div><div style={{ fontFamily:'Noto Sans JP', fontSize:11, color:STAR_COLORS[mergeToast.star] }}>スター昇格！</div><div style={{ fontSize:20, fontWeight:900, color:'white' }}>{mergeToast.jaName}</div></div></div>}
 
