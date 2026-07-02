@@ -83,23 +83,33 @@ const DROP_PLANS = [
   { label: '【HIGH】素材3 / 灰5 / 青0', plan: { comp: 3, gray: 5, blue: 0 } },
 ];
 
+// 🌟 ドロップ設定UI用のアイコン（metatft CDN）
+const DROP_ICONS = {
+  comp: 'https://cdn.metatft.com/file/metatft/items/assistrandomcomponent.png',
+  gold: 'https://cdn.metatft.com/file/metatft/items/assistgivegold.png',
+  c1:   'https://cdn.metatft.com/file/metatft/items/doubleup_assistarmory_champ_1c.png',
+  c2:   'https://cdn.metatft.com/file/metatft/items/doubleup_assistarmory_champ_2c.png',
+  c3:   'https://cdn.metatft.com/file/metatft/items/doubleup_assistarmory_champ_3c.png',
+};
+
 // 🌟 オーブ内容の選択肢（executeOrbDrop の抽選テーブルと1:1対応）
 //    champs: 指定可能なチャンピオン枠のコスト配列
+//    icons: 表示用アイコン。DROP_ICONS のキー、またはmetatftアイテム名
 const ORB_OUTCOMES = {
   GRAY: [
-    { id: 'g_1c2',     label: '1コスト×2体',            champs: [1, 1] },
-    { id: 'g_2c1',     label: '2コスト×1体',            champs: [2] },
-    { id: 'g_reforge', label: '再合成 + 2G',            champs: [] },
-    { id: 'g_remover', label: '除去装置 + 2G',          champs: [] },
-    { id: 'g_dupe',    label: '小型複製機',             champs: [] },
+    { id: 'g_1c2',     label: '1コスト×2体',            champs: [1, 1], icons: ['c1', 'c1'] },
+    { id: 'g_2c1',     label: '2コスト×1体',            champs: [2],    icons: ['c2'] },
+    { id: 'g_reforge', label: '再合成 + 2G',            champs: [],     icons: ['Reforger', 'gold'] },
+    { id: 'g_remover', label: '除去装置 + 2G',          champs: [],     icons: ['itemremover', 'gold'] },
+    { id: 'g_dupe',    label: '小型複製機',             champs: [],     icons: ['Lesser Champion Duplicator'] },
   ],
   BLUE: [
-    { id: 'b_3c2',       label: '3コスト×2体',              champs: [3, 3] },
-    { id: 'b_3c1g',      label: '3コスト×1体 + 3G',         champs: [3] },
-    { id: 'b_2c3',       label: '2コスト×3体',              champs: [2, 2, 2] },
-    { id: 'b_dupe_2c2',  label: '小型複製機 + 2コスト×2体', champs: [2, 2] },
-    { id: 'b_reforge',   label: '再合成 + 6G',              champs: [] },
-    { id: 'b_cdupe_3c1', label: '複製機 + 3コスト×1体',     champs: [3] },
+    { id: 'b_3c2',       label: '3コスト×2体',              champs: [3, 3],    icons: ['c3', 'c3'] },
+    { id: 'b_3c1g',      label: '3コスト×1体 + 3G',         champs: [3],       icons: ['c3', 'gold'] },
+    { id: 'b_2c3',       label: '2コスト×3体',              champs: [2, 2, 2], icons: ['c2', 'c2', 'c2'] },
+    { id: 'b_dupe_2c2',  label: '小型複製機 + 2コスト×2体', champs: [2, 2],    icons: ['Lesser Champion Duplicator', 'c2', 'c2'] },
+    { id: 'b_reforge',   label: '再合成 + 6G',              champs: [],        icons: ['Reforger', 'gold'] },
+    { id: 'b_cdupe_3c1', label: '複製機 + 3コスト×1体',     champs: [3],       icons: ['Champion Duplicator', 'c3'] },
   ],
 };
 
@@ -1744,13 +1754,26 @@ function SettingsScreen({ bindings, onChange, overrides = DEFAULT_OVERRIDES, onC
               {dropChips.map((t, i) => {
                 const cfg = dcOrbs[i] || {};
                 const meta = ORB_META[t];
+                // 🌟 種類ごとの通し番号（灰4ではなく灰1のように振り直す）
+                const typeNum = dropChips.slice(0, i).filter(x => x === t).length + 1;
                 const outcomes = t === 'comp' ? null : ORB_OUTCOMES[t];
                 const selOutcome = cfg.outcome ? (outcomes || []).find(o => o.id === cfg.outcome) : null;
+                // アイコンURL解決: DROP_ICONSキー or metatftアイテム名
+                const iconUrl = (key) => DROP_ICONS[key] || getMetaTFTItemUrl(key);
+                const iconImg = (key, k) => (
+                  <img key={k} src={iconUrl(key)} style={{ width:22, height:22, borderRadius:4, border:'1px solid var(--border)', background:'#1e293b', flexShrink:0 }} />
+                );
+                const selCompItem = cfg.compId ? compItems.find(c => c.id === cfg.compId) : null;
                 return (
                   <div key={i} style={{ background:'rgba(15,23,42,0.55)', border:'1px solid var(--border)', borderRadius:10, padding:'10px 12px', display:'flex', flexDirection:'column', gap:8 }}>
                     {/* 行ヘッダー：種別＋ラウンド */}
                     <div style={{ display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
-                      <span style={{ fontSize:12.5, fontWeight:900, color:meta.color, minWidth:86 }}>{meta.icon} {meta.label} {i+1}</span>
+                      <span style={{ fontSize:12.5, fontWeight:900, color:meta.color, minWidth:100, display:'inline-flex', alignItems:'center', gap:6 }}>
+                        {t === 'comp'
+                          ? <img src={DROP_ICONS.comp} style={{ width:22, height:22, borderRadius:4, flexShrink:0 }} />
+                          : <span style={{ fontSize:15 }}>{meta.icon}</span>}
+                        {meta.label} {typeNum}
+                      </span>
                       <span style={{ fontSize:11, color:'rgba(255,255,255,0.5)' }}>ラウンド:</span>
                       <select style={{ ...selStyle, width:'auto', padding:'6px 8px', fontSize:12 }} value={cfg.round || ''} onChange={e => setOrbCfg(i, { round: e.target.value || null })}>
                         <option value="">自動</option>
@@ -1762,28 +1785,49 @@ function SettingsScreen({ bindings, onChange, overrides = DEFAULT_OVERRIDES, onC
                       {/* 内容選択：素材はアイテム直接、オーブは結果テーブル */}
                       <span style={{ fontSize:11, color:'rgba(255,255,255,0.5)' }}>内容:</span>
                       {t === 'comp' ? (
-                        <select style={{ ...selStyle, width:'auto', flex:1, minWidth:120, padding:'6px 8px', fontSize:12 }} value={cfg.compId || ''} onChange={e => setOrbCfg(i, { compId: e.target.value || null })}>
-                          <option value="">ランダム</option>
-                          {compItems.map(it => (<option key={it.id} value={it.id}>{getJaName ? getJaName(it.name) : it.name}</option>))}
-                        </select>
+                        <React.Fragment>
+                          {/* 選択中の素材アイテムのアイコンをプレビュー */}
+                          {selCompItem && <img src={getMetaTFTItemUrl(selCompItem.name)} style={{ width:22, height:22, borderRadius:4, border:'1px solid var(--gold)', background:'#1e293b', flexShrink:0 }} />}
+                          <select style={{ ...selStyle, width:'auto', flex:1, minWidth:120, padding:'6px 8px', fontSize:12 }} value={cfg.compId || ''} onChange={e => setOrbCfg(i, { compId: e.target.value || null })}>
+                            <option value="">ランダム</option>
+                            {compItems.map(it => (<option key={it.id} value={it.id}>{getJaName(it.name)}</option>))}
+                          </select>
+                        </React.Fragment>
                       ) : (
-                        <select style={{ ...selStyle, width:'auto', flex:1, minWidth:150, padding:'6px 8px', fontSize:12 }} value={cfg.outcome || ''} onChange={e => setOrbCfg(i, { outcome: e.target.value || null, champs: [] })}>
-                          <option value="">ランダム</option>
-                          {outcomes.map(o => (<option key={o.id} value={o.id}>{o.label}</option>))}
-                        </select>
+                        <React.Fragment>
+                          {/* 選択中の内容のアイコン列をプレビュー */}
+                          {selOutcome && (
+                            <span style={{ display:'inline-flex', gap:3, alignItems:'center' }}>
+                              {selOutcome.icons.map((k, j) => iconImg(k, j))}
+                            </span>
+                          )}
+                          <select style={{ ...selStyle, width:'auto', flex:1, minWidth:150, padding:'6px 8px', fontSize:12 }} value={cfg.outcome || ''} onChange={e => setOrbCfg(i, { outcome: e.target.value || null, champs: [] })}>
+                            <option value="">ランダム</option>
+                            {outcomes.map(o => (<option key={o.id} value={o.id}>{o.label}</option>))}
+                          </select>
+                        </React.Fragment>
                       )}
                     </div>
 
                     {/* ③ 詳細：チャンピオン指定枠（結果にチャンピオンが含まれる場合） */}
                     {selOutcome && selOutcome.champs.length > 0 && (
-                      <div style={{ display:'flex', gap:6, flexWrap:'wrap', alignItems:'center', paddingLeft:8 }}>
+                      <div style={{ display:'flex', gap:8, flexWrap:'wrap', alignItems:'center', paddingLeft:8 }}>
                         <span style={{ fontSize:11, color:'var(--gold2)', fontWeight:700 }}>└ チャンピオン:</span>
-                        {selOutcome.champs.map((cost, slot) => (
-                          <select key={slot} style={{ ...selStyle, width:'auto', padding:'6px 8px', fontSize:12 }} value={(cfg.champs || [])[slot] || ''} onChange={e => setOrbChamp(i, slot, e.target.value || null)}>
-                            <option value="">ランダム（{cost}コス）</option>
-                            {champsByCost(cost).map(c => (<option key={c.id} value={c.id}>{c.jaName}</option>))}
-                          </select>
-                        ))}
+                        {selOutcome.champs.map((cost, slot) => {
+                          const selChampId = (cfg.champs || [])[slot];
+                          const selChamp = selChampId ? champsByCost(cost).find(c => c.id === selChampId) : null;
+                          return (
+                            <span key={slot} style={{ display:'inline-flex', gap:4, alignItems:'center' }}>
+                              {/* 選択中はチャンピオンの顔、未選択はコストアイコン */}
+                              <img src={selChamp ? boardIcon(selChamp.img) : DROP_ICONS['c' + cost]}
+                                style={{ width:26, height:26, borderRadius:5, border:`1px solid ${selChamp ? COST_COLORS[cost] : 'var(--border)'}`, background:'#1e293b', objectFit:'cover', flexShrink:0 }} />
+                              <select style={{ ...selStyle, width:'auto', padding:'6px 8px', fontSize:12 }} value={selChampId || ''} onChange={e => setOrbChamp(i, slot, e.target.value || null)}>
+                                <option value="">ランダム（{cost}コス）</option>
+                                {champsByCost(cost).map(c => (<option key={c.id} value={c.id}>{c.jaName}</option>))}
+                              </select>
+                            </span>
+                          );
+                        })}
                       </div>
                     )}
                   </div>
