@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>TFT Simulator - データエディタ</title>
+<script src="sim-config.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Orbitron:wght@700;900&family=Noto+Sans+JP:wght@400;700;900&display=swap" rel="stylesheet">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -59,6 +60,7 @@ textarea{width:100%;min-height:56px;resize:vertical;line-height:1.5}
 <div class="header">
   <h1>🛠️ TFT SIMULATOR EDITOR</h1>
   <span class="sub">記録データの管理 / チャンピオン・オーグメントの編集</span>
+  <a href="index.html" style="margin-left:auto;text-decoration:none"><button>← シミュレーターへ戻る</button></a>
 </div>
 <div class="tabs">
   <div class="tab active" data-page="records">📊 記録データ</div>
@@ -141,6 +143,24 @@ textarea{width:100%;min-height:56px;resize:vertical;line-height:1.5}
 <div class="msg" id="msg"></div>
 
 <script>
+/* ═══════ 管理者ゲート ═══════
+   アカウント連携（シミュレーター側）で管理者と判定された人以外には編集画面を隠す。
+   ※ 静的ホスティングのためあくまで「表示のガード」。データの実protectionはFirestoreルールが担う。 */
+(function adminGate(){
+  const CFG = window.SIM_CONFIG || {};
+  const ad = CFG.admins || { riotIds: [], discordIds: [] };
+  let acct = null;
+  try { acct = JSON.parse(localStorage.getItem('tft_sim_account_v1') || 'null'); } catch(e){}
+  const rid = acct && acct.riot && acct.riot.riotId ? acct.riot.riotId.toLowerCase() : null;
+  const did = acct && acct.discord ? acct.discord.id : null;
+  const ok = (rid && (ad.riotIds || []).some(x => (x || '').toLowerCase() === rid)) ||
+             (did && (ad.discordIds || []).includes(did));
+  if (!ok) {
+    document.body.innerHTML = '<div style="height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;font-family:Noto Sans JP,sans-serif;background:#f0f4f8;color:#1e293b"><div style="font-size:40px">🔒</div><div style="font-size:16px;font-weight:900">このページは管理者専用です</div><div style="font-size:12px;color:#64748b">シミュレーターの「👤 アカウント連携」で管理者アカウントを連携してください</div><a href="index.html" style="margin-top:8px"><button style="background:#0066cc;border:1px solid #0066cc;color:#fff;border-radius:8px;padding:10px 20px;font-size:13px;font-weight:900;cursor:pointer;font-family:Noto Sans JP">← シミュレーターへ</button></a></div>';
+    throw new Error('admin only');
+  }
+})();
+
 /* ═══════ 共通 ═══════ */
 function showMsg(t, err) {
   const m = document.getElementById('msg');
@@ -163,6 +183,11 @@ const champIcon = img => img ? `https://cdn.metatft.com/cdn-cgi/image/width=64,f
 const FB_CFG_KEY = 'sim_editor_fb_cfg';
 let records = [];   // {docName?, seed, ts, user, cheat, data}
 (function initFb(){
+  // sim-config.js の値を既定値に、保存済みのローカル設定があればそちらを優先
+  const cfgFb = (window.SIM_CONFIG && window.SIM_CONFIG.firebase) || {};
+  if (cfgFb.apiKey) document.getElementById('fb-key').value = cfgFb.apiKey;
+  if (cfgFb.projectId) document.getElementById('fb-pid').value = cfgFb.projectId;
+  if (cfgFb.collection) document.getElementById('fb-col').value = cfgFb.collection;
   try { const c = JSON.parse(localStorage.getItem(FB_CFG_KEY) || '{}');
     if (c.apiKey) document.getElementById('fb-key').value = c.apiKey;
     if (c.projectId) document.getElementById('fb-pid').value = c.projectId;

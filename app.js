@@ -68,11 +68,12 @@ function loadOverrides() {
    下の SEED_STATS_CONFIG に apiKey / projectId を入れると全ユーザーで共有される。
    未設定の場合は localStorage のみ（このブラウザの自分の記録だけ）で動作する。
    Firestore 側は該当コレクションに read/write を許可するルールが必要。 */
-const firebaseConfig = {
-  apiKey: "AIzaSyDeg92vX9vqWODJ8TbufZv_-H2abGEDLfo",
-  projectId: "st-simulator",
-   collection: 'sim_seed_stats',
-};
+/* 設定は sim-config.js（window.SIM_CONFIG）から読み込む。未定義でも下記の既定値で動作する。 */
+const SIM_CFG = (typeof window !== 'undefined' && window.SIM_CONFIG) ? window.SIM_CONFIG : {};
+const SEED_STATS_CONFIG = Object.assign(
+  { apiKey: 'AIzaSyDeg92vX9vqWODJ8TbufZv_-H2abGEDLfo', projectId: 'st-simulator', collection: 'sim_seed_stats' },
+  SIM_CFG.firebase || {}
+);
 const seedStatsShared = () => !!(SEED_STATS_CONFIG.apiKey && SEED_STATS_CONFIG.projectId);
 const SEED_STATS_LOCAL_KEY = 'tft_sim_seed_stats_v1';
 const getStatsPlayerName = () => { try { return localStorage.getItem('tft_sim_player_name') || ''; } catch (e) { return ''; } };
@@ -94,6 +95,7 @@ async function submitSeedRecord(record) {
       ts:    { integerValue: String(record.ts) },
       user:  { stringValue: record.user || '名無し' },
       cheat: { booleanValue: !!record.cheat },
+      player:{ stringValue: JSON.stringify(record.player || null) },
       data:  { stringValue: JSON.stringify(record.data) },
     } };
     const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -118,12 +120,68 @@ async function fetchSeedRecords(seed) {
     const records = (Array.isArray(rows) ? rows : []).filter(r => r.document && r.document.fields).map(r => {
       const f = r.document.fields;
       let data = {}; try { data = JSON.parse((f.data && f.data.stringValue) || '{}'); } catch (e) {}
-      return { seed: f.seed?.stringValue || seed, ts: Number(f.ts?.integerValue || 0), user: f.user?.stringValue || '名無し', cheat: !!(f.cheat && f.cheat.booleanValue), data };
+      let player = null; try { player = JSON.parse((f.player && f.player.stringValue) || 'null'); } catch (e) {}
+      return { seed: f.seed?.stringValue || seed, ts: Number(f.ts?.integerValue || 0), user: f.user?.stringValue || '名無し', cheat: !!(f.cheat && f.cheat.booleanValue), player, data };
     });
     return { records, shared: true };
   } catch (e) {
     return { records: local, shared: false, error: e.message }; // 通信失敗時はローカルにフォールバック
   }
+}
+
+/* ── 👤 アカウント連携（Riot ID / Discord） ── */
+const ACCOUNT_KEY = 'tft_sim_account_v1';
+const loadAccount = () => { try { return JSON.parse(localStorage.getItem(ACCOUNT_KEY) || 'null'); } catch (e) { return null; } };
+const saveAccount = (a) => { try { a ? localStorage.setItem(ACCOUNT_KEY, JSON.stringify(a)) : localStorage.removeItem(ACCOUNT_KEY); } catch (e) {} };
+const RANK_JA = { IRON:'アイアン', BRONZE:'ブロンズ', SILVER:'シルバー', GOLD:'ゴールド', PLATINUM:'プラチナ', EMERALD:'エメラルド', DIAMOND:'ダイヤモンド', MASTER:'マスター', GRANDMASTER:'グランドマスター', CHALLENGER:'チャレンジャー' };
+// 管理者判定：sim-config.js の admins に Riot ID または Discord ID が含まれるか
+const isAdminAccount = (acct) => {
+  const ad = SIM_CFG.admins || { riotIds: ['Mo10C#819'], discordIds: [] };
+  const rid = acct && acct.riot && acct.riot.riotId ? acct.riot.riotId.toLowerCase() : null;
+  const did = acct && acct.discord ? acct.discord.id : null;
+  return !!((rid && (ad.riotIds || []).some(x => (x || '').toLowerCase() === rid)) ||
+            (did && (ad.discordIds || []).includes(did)));
+};
+
+// Riot ID 連携：Cloudflare Worker プロキシ経由で puuid とTFTランクを取得
+async function linkRiotAccount(riotIdInput) {
+  const proxy = (SIM_CFG.riotProxyUrl || '').replace(/\/+$/, '');
+  if (!proxy) throw new Error('sim-config.js の riotProxyUrl が未設定です');
+  const parts = (riotIdInput || '').split('#');
+  if (parts.length !== 2 || !parts[0].trim() || !parts[1].trim()) throw new Error('Riot ID は「名前#タグ」の形式で入力してください');
+  const accRes = await fetch(`${proxy}/riot/account/v1/accounts/by-riot-id/${encodeURIComponent(parts[0].trim())}/${encodeURIComponent(parts[1].trim())}`);
+  const acc = await accRes.json();
+  if (!acc.puuid) throw new Error((acc.status && acc.status.message) || 'アカウントが見つかりません');
+  let tier = null, rank = null, lp = null;
+  try {
+    const lgRes = await fetch(`${proxy}/tft/league/v1/by-puuid/${acc.puuid}`);
+    const entries = await lgRes.json();
+    const e = Array.isArray(entries) ? entries.find(x => x.queueType === 'RANKED_TFT') : null;
+    if (e) { tier = e.tier; rank = e.rank; lp = e.leaguePoints; }
+  } catch (e) {}
+  return { riotId: `${acc.gameName}#${acc.tagLine}`, gameName: acc.gameName, puuid: acc.puuid, tier, rank, lp, linkedAt: Date.now() };
+}
+
+// Discord 連携：implicit OAuth2（サーバー不要）。認可後このページに戻り、URLハッシュのトークンで /users/@me を取得
+function startDiscordLink() {
+  const cid = SIM_CFG.discordClientId;
+  if (!cid) { alert('sim-config.js の discordClientId が未設定です'); return; }
+  const redirect = window.location.origin + window.location.pathname;
+  window.location.href = `https://discord.com/oauth2/authorize?client_id=${cid}&response_type=token&scope=identify&redirect_uri=${encodeURIComponent(redirect)}`;
+}
+async function consumeDiscordToken() {
+  const h = window.location.hash;
+  if (!h || h.indexOf('access_token=') === -1) return null;
+  const p = new URLSearchParams(h.slice(1));
+  const token = p.get('access_token');
+  window.history.replaceState(null, '', window.location.pathname + window.location.search); // トークンをURLから除去
+  if (!token) return null;
+  try {
+    const me = await (await fetch('https://discord.com/api/users/@me', { headers: { Authorization: `Bearer ${token}` } })).json();
+    if (!me.id) return null;
+    return { id: me.id, username: me.global_name || me.username,
+             avatarUrl: me.avatar ? `https://cdn.discordapp.com/avatars/${me.id}/${me.avatar}.png?size=64` : null, linkedAt: Date.now() };
+  } catch (e) { return null; }
 }
 
 function saveOverrides(o) {
@@ -636,6 +694,93 @@ function ReplayViewer({ history, seed, onClose }) {
   );
 }
 
+/* ── 👤 アカウント連携画面 ── */
+function AccountScreen({ account, onChangeAccount, onBack }) {
+  const [riotInput, setRiotInput] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const admin = isAdminAccount(account);
+
+  const doLinkRiot = async () => {
+    setBusy(true); setErr(null);
+    try {
+      const riot = await linkRiotAccount(riotInput);
+      onChangeAccount({ ...(account || {}), riot });
+      setRiotInput('');
+    } catch (e) { setErr(e.message); }
+    setBusy(false);
+  };
+
+  const card = { background: 'rgba(8,16,26,0.85)', border: '1px solid var(--border)', borderRadius: 14, padding: 18, width: 'min(560px, 94vw)' };
+  const secT = { fontSize: 13, fontWeight: 900, color: 'var(--gold2)', marginBottom: 10 };
+
+  return (
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, padding: 16, overflowY: 'auto',
+      backgroundImage: `linear-gradient(rgba(0,0,0,0.75), rgba(0,0,0,0.75)), url("https://assets.st-note.com/production/uploads/images/263587712/rectangle_large_type_2_386d7257054746a6649e14bdb1432725.jpeg?width=4000&height=4000&fit=bounds&format=jpg&quality=90")`,
+      backgroundSize: 'cover', backgroundPosition: 'center', animation: 'fadeIn 0.4s ease' }}>
+      <div style={{ fontFamily: 'Orbitron', fontSize: 'clamp(18px,4vw,28px)', fontWeight: 900, color: '#fff', letterSpacing: 4, textShadow: '0 0 10px rgba(0,0,0,0.9), 0 0 18px var(--gold)' }}>
+        👤 アカウント連携 {admin && <span style={{ fontSize: 13, color: '#ffd76e', letterSpacing: 1 }}>🛡️ 管理者</span>}
+      </div>
+
+      {/* Riot ID */}
+      <div style={card}>
+        <div style={secT}>🎮 Riot ID（サモナーネーム・TFTランク）</div>
+        {account && account.riot ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <div style={{ flex: 1, minWidth: 200 }}>
+              <div style={{ fontSize: 16, fontWeight: 900, color: '#fff' }}>{account.riot.riotId}</div>
+              <div style={{ fontSize: 12.5, color: account.riot.tier ? 'var(--gold2)' : 'rgba(255,255,255,0.5)', marginTop: 3, fontWeight: 700 }}>
+                {account.riot.tier ? `${RANK_JA[account.riot.tier] || account.riot.tier} ${account.riot.tier === 'MASTER' || account.riot.tier === 'GRANDMASTER' || account.riot.tier === 'CHALLENGER' ? '' : account.riot.rank || ''} ${account.riot.lp != null ? account.riot.lp + 'LP' : ''}` : 'ランクデータなし'}
+              </div>
+            </div>
+            <button onClick={() => onChangeAccount({ ...(account || {}), riot: null })}
+              style={{ padding: '8px 14px', borderRadius: 8, background: 'rgba(220,53,69,0.5)', border: '1px solid var(--red)', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>連携解除</button>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <input value={riotInput} onChange={e => setRiotInput(e.target.value)} placeholder="例: Mo10C#819"
+              onKeyDown={e => { if (e.key === 'Enter' && !busy) doLinkRiot(); }}
+              style={{ flex: 1, minWidth: 200, padding: '10px 12px', borderRadius: 8, background: 'rgba(15,23,42,0.9)', color: '#fff', border: '1px solid var(--border)', fontSize: 13.5, fontFamily: 'Noto Sans JP' }} />
+            <button onClick={doLinkRiot} disabled={busy}
+              style={{ padding: '10px 18px', borderRadius: 8, background: 'var(--blue)', border: '1px solid var(--blue)', color: '#fff', fontSize: 13, fontWeight: 900, cursor: 'pointer', opacity: busy ? 0.5 : 1 }}>
+              {busy ? '確認中…' : '連携する'}
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Discord */}
+      <div style={card}>
+        <div style={secT}>💬 Discord（名前・アイコン）</div>
+        {account && account.discord ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            {account.discord.avatarUrl && <img src={account.discord.avatarUrl} style={{ width: 44, height: 44, borderRadius: '50%', border: '2px solid var(--blue)' }} />}
+            <div style={{ flex: 1, minWidth: 160 }}>
+              <div style={{ fontSize: 15, fontWeight: 900, color: '#fff' }}>{account.discord.username}</div>
+              <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.45)', marginTop: 2 }}>ID: {account.discord.id}（管理者登録用にコピーできます）</div>
+            </div>
+            <button onClick={() => onChangeAccount({ ...(account || {}), discord: null })}
+              style={{ padding: '8px 14px', borderRadius: 8, background: 'rgba(220,53,69,0.5)', border: '1px solid var(--red)', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>連携解除</button>
+          </div>
+        ) : (
+          <button onClick={startDiscordLink}
+            style={{ padding: '11px 20px', borderRadius: 9, background: '#5865F2', border: '1px solid #5865F2', color: '#fff', fontSize: 13.5, fontWeight: 900, cursor: 'pointer' }}>
+            Discord でログインして連携
+          </button>
+        )}
+      </div>
+
+      {err && <div style={{ color: '#ff9f9f', fontSize: 12.5, fontWeight: 700, background: 'rgba(94,22,22,0.6)', border: '1px solid var(--red)', borderRadius: 9, padding: '9px 14px', width: 'min(560px, 94vw)' }}>⚠ {err}</div>}
+
+      <div style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, width: 'min(560px, 94vw)', lineHeight: 1.7 }}>
+        連携情報はこのブラウザに保存され、「みんなの結果」を見る際の記録に名前・ランク・アイコンが付きます。チャレンジャーのプレイヤーの記録は、みんなの結果で「○○さんの盤面」として公開されます。
+      </div>
+
+      <button onClick={onBack} className="menu-btn" style={{ width: 220, background: 'var(--blue)', color: '#fff', borderColor: 'var(--blue)', fontWeight: 900 }}>メニューに戻る</button>
+    </div>
+  );
+}
+
 /* ── 📊 シード統計ドロワー（結果画面の右から出る） ── */
 function SeedStatsDrawer({ seed, open, onClose }) {
   const [loading, setLoading] = useState(false);
@@ -644,14 +789,20 @@ function SeedStatsDrawer({ seed, open, onClose }) {
   const [errMsg, setErrMsg] = useState(null);
   const [includeCheat, setIncludeCheat] = useState(true);
   const [playerName, setPlayerName] = useState(getStatsPlayerName());
+  const [openTopIdx, setOpenTopIdx] = useState(null); // 🏆 展開中のチャレンジャー盤面
 
   const load = async () => {
     setLoading(true); setErrMsg(null);
-    const res = await fetchSeedRecords(seed);
-    setRecords(res.records || []);
-    setSharedMode(!!res.shared);
-    if (res.error) setErrMsg(res.error);
-    setLoading(false);
+    try {
+      const res = await fetchSeedRecords(seed);
+      setRecords(res.records || []);
+      setSharedMode(!!res.shared);
+      if (res.error) setErrMsg(res.error);
+    } catch (e) {
+      setErrMsg(e.message);  // どんな例外でも「読み込み中…」で固まらないようにする
+    } finally {
+      setLoading(false);
+    }
   };
   useEffect(() => { if (open) load(); }, [open, seed]);
 
@@ -676,8 +827,10 @@ function SeedStatsDrawer({ seed, open, onClose }) {
       new Set(d.items || []).forEach(name => bump(itemMap, name, { name }));
     });
     const sorted = (m) => [...m.values()].sort((a, b) => b.count - a.count);
+    // 🏆 チャレンジャーの記録（盤面をそのまま閲覧できる）
+    const topRecs = recs.filter(r => r.player && r.player.tier === 'CHALLENGER').sort((a, b) => (b.player.lp || 0) - (a.player.lp || 0));
     return { n, cheatCount: records.filter(r => r.cheat).length,
-      augs: sorted(augMap), board: sorted(boardMap), bench: sorted(benchMap), items: sorted(itemMap) };
+      augs: sorted(augMap), board: sorted(boardMap), bench: sorted(benchMap), items: sorted(itemMap), topRecs };
   }, [records, includeCheat]);
 
   const pct = (c) => agg.n ? Math.round((c / agg.n) * 100) : 0;
@@ -738,6 +891,56 @@ function SeedStatsDrawer({ seed, open, onClose }) {
               🎮 {agg.n} 回のプレイデータ
             </div>
             {errMsg && <div style={{ fontSize: 10, color: '#ff9f43', marginTop: 6 }}>⚠ 共有データの取得に失敗（ローカル表示中）: {errMsg}</div>}
+
+            {agg.topRecs.length > 0 && (
+              <React.Fragment>
+                {secTitle('🏆 チャレンジャーの盤面')}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                  {agg.topRecs.map((r, ti) => {
+                    const p = r.player;
+                    const isOpen = openTopIdx === ti;
+                    return (
+                      <div key={ti} style={{ border: `1px solid ${isOpen ? 'var(--gold2)' : 'rgba(148,163,184,0.35)'}`, borderRadius: 9, overflow: 'hidden' }}>
+                        <div onClick={() => setOpenTopIdx(isOpen ? null : ti)}
+                          style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 9px', cursor: 'pointer', background: 'rgba(212,175,55,0.10)' }}>
+                          {p.discordAvatar
+                            ? <img src={p.discordAvatar} style={{ width: 26, height: 26, borderRadius: '50%', border: '1px solid var(--gold2)', flexShrink: 0 }} />
+                            : <span style={{ fontSize: 15 }}>🏆</span>}
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 12, fontWeight: 900, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name || r.user} の盤面</div>
+                            <div style={{ fontSize: 9.5, color: 'var(--gold2)', fontWeight: 700 }}>チャレンジャー {p.lp != null ? p.lp + 'LP' : ''}{r.cheat ? ' ・チート使用' : ''}</div>
+                          </div>
+                          <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', flexShrink: 0 }}>{isOpen ? '▲ 閉じる' : '▼ 見る'}</span>
+                        </div>
+                        {isOpen && (
+                          <div style={{ padding: '10px 8px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, background: 'rgba(4,8,16,0.5)' }}>
+                            {/* 盤面（座標付き記録から再現） */}
+                            <div>
+                              {[0, 1, 2, 3].map(row => (
+                                <div key={row} style={{ display: 'flex', gap: 1, marginLeft: row % 2 === 1 ? 21 : 0 }}>
+                                  {[0, 1, 2, 3, 4, 5, 6].map(col => {
+                                    const u = (r.data.board || []).find(x => x.pos === row * 7 + col);
+                                    const c = u ? champById(u.id) : null;
+                                    return <HexCell key={col} champ={c ? { ...c, star: u.star } : null} size={42} />;
+                                  })}
+                                </div>
+                              ))}
+                            </div>
+                            {(r.data.augments || []).length > 0 && (
+                              <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', justifyContent: 'center' }}>
+                                {r.data.augments.map((a, k) => (
+                                  <span key={k} style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 10, background: 'rgba(15,23,42,0.8)', border: '1px solid rgba(148,163,184,0.4)', color: (typeof TIER_COLORS !== 'undefined' && TIER_COLORS[a.tier]) || '#fff' }}>{a.name}</span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </React.Fragment>
+            )}
 
             {secTitle('✨ オーグメント取得率')}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -2305,6 +2508,14 @@ function Main() {
   const [gameKey, setGameKey] = useState(0);
   const [keyBindings, setKeyBindings] = useState(loadKeyBindings); // 🌟 キー割り当て
   const [gameOverrides, setGameOverrides] = useState(loadOverrides); // 🌟 ゲーム内設定の手動オーバーライド
+  const [account, setAccount] = useState(loadAccount);              // 👤 連携アカウント
+  const changeAccount = (a) => { setAccount(a); saveAccount(a); };
+  // Discord OAuth から戻ってきた時のトークン受け取り
+  useEffect(() => {
+    consumeDiscordToken().then(d => {
+      if (d) { setAccount(prev => { const next = { ...(prev || {}), discord: d }; saveAccount(next); return next; }); setView('ACCOUNT'); }
+    });
+  }, []);
 
   const startWithSeed = (targetSeed) => {
     const newSeed = targetSeed || Math.random().toString(36).substring(2, 9).toUpperCase();
@@ -2365,9 +2576,33 @@ function Main() {
           >
             ⚙️ 設定
           </button>
+          <button 
+            className="menu-btn" 
+            style={{ width:220, background:'rgba(15,23,42,0.8)', color:'white', borderColor:'var(--border)', boxShadow:'0 10px 30px rgba(0,0,0,0.5)', transition:'all 0.2s ease', cursor:'pointer' }} 
+            onClick={() => setView('ACCOUNT')}
+            onMouseEnter={e => { e.currentTarget.style.transform = 'scale(1.05)'; e.currentTarget.style.background = 'rgba(30,45,74,0.9)'; }}
+            onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.background = 'rgba(15,23,42,0.8)'; }}
+          >
+            👤 アカウント連携{account && (account.riot || account.discord) ? ' ✓' : ''}
+          </button>
+          {isAdminAccount(account) && (
+            <button 
+              className="menu-btn" 
+              style={{ width:220, background:'rgba(94,74,22,0.85)', color:'#ffd76e', borderColor:'var(--gold)', boxShadow:'0 10px 30px rgba(0,0,0,0.5)', transition:'all 0.2s ease', cursor:'pointer' }} 
+              onClick={() => { window.location.href = 'sim-editor.html'; }}
+              onMouseEnter={e => { e.currentTarget.style.transform = 'scale(1.05)'; }}
+              onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)'; }}
+            >
+              🛠️ エディタ（管理者）
+            </button>
+          )}
         </div>
       </div>
     );
+  }
+
+  if (view === 'ACCOUNT') {
+    return <AccountScreen account={account} onChangeAccount={changeAccount} onBack={() => setView('MENU')} />;
   }
 
   if (view === 'SETTINGS') {
@@ -2382,13 +2617,13 @@ function Main() {
     );
   }
 
-  return <App key={gameKey} seed={seed} keyBindings={keyBindings} gameOverrides={gameOverrides}
+  return <App key={gameKey} seed={seed} keyBindings={keyBindings} gameOverrides={gameOverrides} account={account}
     onChangeKeyBindings={(kb) => { setKeyBindings(kb); saveKeyBindings(kb); }}
     onChangeOverrides={(ov) => { setGameOverrides(ov); saveOverrides(ov); }}
     onRestart={() => startWithSeed(seed)} onNewGame={() => startWithSeed()} />;
 }
 
-function App({ seed, onRestart, onNewGame, keyBindings = DEFAULT_KEYBINDINGS, gameOverrides = DEFAULT_OVERRIDES, onChangeKeyBindings = () => {}, onChangeOverrides = () => {} }) {
+function App({ seed, onRestart, onNewGame, keyBindings = DEFAULT_KEYBINDINGS, gameOverrides = DEFAULT_OVERRIDES, account = null, onChangeKeyBindings = () => {}, onChangeOverrides = () => {} }) {
   // 🌟 RNG（乱数生成器）をジャンルごとに独立させ、他の行動によるズレを防止！
   const rngSys = useMemo(() => createRNG(seed + "_sys"), [seed]);
   const rngShop = useMemo(() => createRNG(seed + "_shop"), [seed]);
@@ -2524,14 +2759,26 @@ function App({ seed, onRestart, onNewGame, keyBindings = DEFAULT_KEYBINDINGS, ga
     if (isFinished && !statsSubmittedRef.current) {
       statsSubmittedRef.current = true;
       const hasCheat = !!(gameOverrides && Object.keys(DEFAULT_OVERRIDES).some(k => gameOverrides[k] != null));
+      // 盤面は座標(pos)付きで保存 → チャレンジャーの盤面をそのまま再現表示できる
+      const pickBoard = (arr) => arr.map((u, pos) => (u && !u.isAnvil) ? { id: u.id, jaName: u.jaName, star: u.star || 1, pos } : null).filter(Boolean);
       const pickUnits = (arr) => arr.filter(u => u && !u.isAnvil).map(u => ({ id: u.id, jaName: u.jaName, star: u.star || 1 }));
+      const acctPlayer = account ? {
+        riotId: account.riot ? account.riot.riotId : null,
+        name: (account.riot && account.riot.gameName) || (account.discord && account.discord.username) || null,
+        tier: account.riot ? account.riot.tier : null,
+        rank: account.riot ? account.riot.rank : null,
+        lp: account.riot ? account.riot.lp : null,
+        discordName: account.discord ? account.discord.username : null,
+        discordAvatar: account.discord ? account.discord.avatarUrl : null,
+      } : null;
       const record = {
         seed, ts: Date.now(),
-        user: getStatsPlayerName() || '名無し',
+        user: (acctPlayer && acctPlayer.name) || getStatsPlayerName() || '名無し',
+        player: acctPlayer,
         cheat: hasCheat,
         data: {
           augments: augments.map(a => ({ name: a.name, tier: a.tier })),
-          board: pickUnits(board),
+          board: pickBoard(board),
           bench: pickUnits(bench),
           // 盤面ユニットに装備中の完成系アイテム（素材・消耗品を除く）
           items: board.filter(u => u && !u.isAnvil).flatMap(u => u.items || [])
