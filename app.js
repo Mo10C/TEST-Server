@@ -477,21 +477,23 @@ function ReplayViewer({ history, seed, onClose }) {
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 9500, background: 'rgba(4,8,16,0.94)', backdropFilter: 'blur(6px)',
-      display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '14px 12px', overflowY: 'auto', animation: 'fadeIn 0.25s ease' }}>
+      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '10px 12px', overflowY: 'auto', animation: 'fadeIn 0.25s ease' }}>
 
-      {/* ヘッダー */}
-      <div style={{ width: 'min(860px, 96vw)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, gap: 10, flexWrap: 'wrap' }}>
-        <div style={{ fontFamily: 'Orbitron', fontSize: 16, fontWeight: 900, color: '#fff', letterSpacing: 3 }}>🎬 振り返り <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', letterSpacing: 1 }}>SEED: {seed}</span></div>
-        <button onClick={onClose} style={{ padding: '8px 16px', borderRadius: 8, background: 'rgba(220,53,69,0.7)', border: '1px solid var(--red)', color: '#fff', fontWeight: 900, fontSize: 13, cursor: 'pointer' }}>✕ 閉じる (Esc)</button>
-      </div>
+      {/* 🌟 画面中央に大きく表示するメインパネル */}
+      <div style={{ width: 'min(1020px, 97vw)', maxHeight: '96vh', background: 'rgba(8,16,26,0.92)', border: '1px solid var(--border)', borderRadius: 16, padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 10, boxShadow: '0 24px 80px rgba(0,0,0,0.7)', overflowY: 'auto' }}>
 
-      {/* アクションラベル＋ステータス */}
-      <div style={{ width: 'min(860px, 96vw)', background: 'rgba(8,16,26,0.9)', border: '1px solid var(--border)', borderRadius: 14, padding: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
-          <div style={{ fontSize: 15, fontWeight: 900, color: 'var(--gold2)', minHeight: 22 }}>{frame.label}</div>
+        {/* ヘッダー：タイトル＋閉じる */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', flexShrink: 0 }}>
+          <div style={{ fontFamily: 'Orbitron', fontSize: 16, fontWeight: 900, color: '#fff', letterSpacing: 3 }}>🎬 振り返り <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', letterSpacing: 1 }}>SEED: {seed}</span></div>
+          <button onClick={onClose} style={{ padding: '8px 16px', borderRadius: 8, background: 'rgba(220,53,69,0.7)', border: '1px solid var(--red)', color: '#fff', fontWeight: 900, fontSize: 13, cursor: 'pointer' }}>✕ 閉じる (Esc)</button>
+        </div>
+
+        {/* アクションラベル＋ステータス */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', flexShrink: 0 }}>
+          <div style={{ fontSize: 15.5, fontWeight: 900, color: 'var(--gold2)', minHeight: 22 }}>{frame.label}</div>
           <div style={{ fontFamily: 'Orbitron', fontSize: 12, color: 'rgba(255,255,255,0.6)' }}>{idx + 1} / {total}</div>
         </div>
-        <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 12.5, fontWeight: 700, color: '#fff' }}>
+        <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 12.5, fontWeight: 700, color: '#fff', flexShrink: 0 }}>
           <span>📅 {frame.round}</span>
           <span style={{ color: 'var(--gold2)' }}>🪙 {frame.gold}G</span>
           <span>Lv.{frame.level} <span style={{ color: 'rgba(255,255,255,0.5)' }}>(XP {frame.xp})</span></span>
@@ -503,41 +505,51 @@ function ReplayViewer({ history, seed, onClose }) {
           )}
         </div>
 
-        {/* 盤面 */}
-        <div style={{ display: 'flex', justifyContent: 'center' }}>
-          <div>
-            {[0, 1, 2, 3].map(row => (
-              <div key={row} style={{ display: 'flex', gap: 2, marginLeft: row % 2 === 1 ? 24 : 0 }}>
-                {[0, 1, 2, 3, 4, 5, 6].map(col => <HexCell key={row * 7 + col} champ={frame.board[row * 7 + col]} size={48} />)}
-              </div>
-            ))}
-          </div>
-        </div>
+        {/* 🌟 ゲーム画面と同じ配置：左にアイテム縦列、中央に盤面→ベンチ→ショップ */}
+        <div style={{ display: 'flex', gap: 16, justifyContent: 'center', alignItems: 'flex-start', flexShrink: 0 }}>
 
-        {/* ベンチ＋ショップ＋アイテム */}
-        <div style={{ display: 'flex', gap: 16, justifyContent: 'center', flexWrap: 'wrap' }}>
-          <div style={{ background: 'rgba(0,0,0,0.35)', padding: '6px 10px', borderRadius: 10, border: '1px solid rgba(30,45,74,0.5)' }}>
-            <div style={{ fontSize: 9, color: 'var(--textdim)', fontFamily: 'Orbitron', letterSpacing: 1, textAlign: 'center', marginBottom: 4 }}>BENCH</div>
-            <div style={{ display: 'flex', gap: 4 }}>{frame.bench.map(renderMini)}</div>
-          </div>
-          <div style={{ background: 'rgba(0,0,0,0.35)', padding: '6px 10px', borderRadius: 10, border: '1px solid rgba(30,45,74,0.5)' }}>
-            <div style={{ fontSize: 9, color: 'var(--blue)', fontFamily: 'Orbitron', letterSpacing: 1, textAlign: 'center', marginBottom: 4 }}>SHOP</div>
-            <div style={{ display: 'flex', gap: 4 }}>{frame.shop.map(renderMini)}</div>
-          </div>
-          <div style={{ background: 'rgba(0,0,0,0.35)', padding: '6px 10px', borderRadius: 10, border: '1px solid rgba(30,45,74,0.5)', maxWidth: 200 }}>
-            <div style={{ fontSize: 9, color: 'var(--gold)', fontFamily: 'Orbitron', letterSpacing: 1, textAlign: 'center', marginBottom: 4 }}>ITEMS</div>
-            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+          {/* 左：アイテム縦列 */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, background: 'rgba(0,0,0,0.35)', padding: '10px 8px', borderRadius: 10, border: '1px solid rgba(30,45,74,0.5)', alignItems: 'center', minWidth: 48, alignSelf: 'stretch' }}>
+            <div style={{ fontSize: 9, color: 'var(--gold)', fontFamily: 'Orbitron', letterSpacing: 1 }}>ITEMS</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 5, alignItems: 'center', flex: 1, flexWrap: 'wrap', justifyContent: 'flex-start', maxHeight: 340 }}>
               {frame.inventory.length > 0 ? frame.inventory.map((it, i) => (
-                <div key={i} style={{ width: 24, height: 24, background: '#1e293b', borderRadius: 4, border: '1px solid var(--border)', overflow: 'hidden', flexShrink: 0 }}>
-                  {it?.name ? <img src={getMetaTFTItemUrl(it)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <span style={{ fontSize: 11 }}>{it?.icon}</span>}
+                <div key={i} style={{ width: 28, height: 28, background: '#1e293b', borderRadius: 4, border: '1px solid var(--border)', overflow: 'hidden', flexShrink: 0, position: 'relative' }}>
+                  {it?.name ? <img src={getMetaTFTItemUrl(it)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <span style={{ fontSize: 12, display:'flex', alignItems:'center', justifyContent:'center', height:'100%' }}>{it?.icon}</span>}
+                  {it?.id === 'remover' && (it.count || 1) > 1 && (
+                    <div style={{ position: 'absolute', top: -1, left: -1, background: 'var(--blue)', color: 'white', fontSize: 8, fontWeight: 900, width: 12, height: 12, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{it.count}</div>
+                  )}
                 </div>
-              )) : <span style={{ fontSize: 10, color: 'var(--textdim)' }}>なし</span>}
+              )) : <div style={{ fontSize: 10, color: 'var(--textdim)', writingMode: 'vertical-rl', padding: '6px 0' }}>なし</div>}
+            </div>
+          </div>
+
+          {/* 中央：盤面 → ベンチ → ショップ */}
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+            {/* 盤面（大きく） */}
+            <div>
+              {[0, 1, 2, 3].map(row => (
+                <div key={row} style={{ display: 'flex', gap: 2, marginLeft: row % 2 === 1 ? 29 : 0 }}>
+                  {[0, 1, 2, 3, 4, 5, 6].map(col => <HexCell key={row * 7 + col} champ={frame.board[row * 7 + col]} size={58} />)}
+                </div>
+              ))}
+            </div>
+
+            {/* ベンチ */}
+            <div style={{ background: 'rgba(0,0,0,0.35)', padding: '6px 12px', borderRadius: 10, border: '1px solid rgba(30,45,74,0.5)' }}>
+              <div style={{ fontSize: 9, color: 'var(--textdim)', fontFamily: 'Orbitron', letterSpacing: 1, textAlign: 'center', marginBottom: 4 }}>BENCH</div>
+              <div style={{ display: 'flex', gap: 5 }}>{frame.bench.map(renderMini)}</div>
+            </div>
+
+            {/* ショップ */}
+            <div style={{ background: 'rgba(0,0,0,0.35)', padding: '6px 12px', borderRadius: 10, border: '1px solid rgba(30,45,74,0.5)' }}>
+              <div style={{ fontSize: 9, color: 'var(--blue)', fontFamily: 'Orbitron', letterSpacing: 1, textAlign: 'center', marginBottom: 4 }}>SHOP</div>
+              <div style={{ display: 'flex', gap: 5 }}>{frame.shop.map(renderMini)}</div>
             </div>
           </div>
         </div>
 
         {/* コントロール */}
-        <div style={{ display: 'flex', gap: 8, justifyContent: 'center', alignItems: 'center', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'center', alignItems: 'center', flexWrap: 'wrap', flexShrink: 0, marginTop: 2 }}>
           {btn('|◀', () => { setPlaying(false); setIdx(0); }, idx === 0)}
           {btn('◀ 前', () => { setPlaying(false); setIdx(i => Math.max(0, i - 1)); }, idx === 0)}
           {btn(playing ? '⏸ 停止' : '▶ 再生', () => setPlaying(p => !p), idx >= total - 1 && !playing, true)}
@@ -555,8 +567,8 @@ function ReplayViewer({ history, seed, onClose }) {
         {/* シークバー */}
         <input type="range" min={0} max={Math.max(0, total - 1)} value={idx}
           onChange={e => { setPlaying(false); setIdx(Number(e.target.value)); }}
-          style={{ width: '100%', accentColor: 'var(--gold2)', cursor: 'pointer' }} />
-        <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.4)', textAlign: 'center' }}>← / → キーでコマ送り、スペースで再生/停止</div>
+          style={{ width: '100%', accentColor: 'var(--gold2)', cursor: 'pointer', flexShrink: 0 }} />
+        <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.4)', textAlign: 'center', flexShrink: 0 }}>← / → キーでコマ送り、スペースで再生/停止</div>
       </div>
     </div>
   );
@@ -1431,6 +1443,168 @@ function AugmentPickerScreen({ augData, value, onChange, onBack }) {
   );
 }
 
+/* ── 📦 ドロップ設定 専用画面（設定から開く） ── */
+function DropPickerScreen({ ov, setOvKey, onBack }) {
+  const dropPlanSel = (ov.dropPlanIndex != null && DROP_PLANS[ov.dropPlanIndex]) ? DROP_PLANS[ov.dropPlanIndex] : null;
+  const dropChips = dropPlanSel ? [
+    ...Array(dropPlanSel.plan.comp).fill('comp'),
+    ...Array(dropPlanSel.plan.gray).fill('GRAY'),
+    ...Array(dropPlanSel.plan.blue).fill('BLUE'),
+  ] : [];
+  const dcOrbs = (ov.dropConfig && ov.dropConfig.planIndex === ov.dropPlanIndex && Array.isArray(ov.dropConfig.orbs)) ? ov.dropConfig.orbs : [];
+  const compItems = (typeof ITEMS !== 'undefined' ? ITEMS : []).filter(it => it.type === 'comp' && it.id !== 'spatula' && it.id !== 'pan');
+  const champsByCost = (cost) => (typeof CHAMPS !== 'undefined' ? CHAMPS : []).filter(c => c.cost === cost);
+  const setOrbCfg = (i, patch) => {
+    const orbs = dropChips.map((t, k) => {
+      const cur = { ...(dcOrbs[k] || {}) };
+      return k === i ? { ...cur, ...patch } : cur;
+    });
+    const any = orbs.some(o => o.round || o.outcome || o.compId || (o.champs || []).some(Boolean));
+    setOvKey({ dropConfig: any ? { planIndex: ov.dropPlanIndex, orbs } : null });
+  };
+  const setOrbChamp = (i, slot, champId) => {
+    const cur = dcOrbs[i] || {};
+    const champs = [...(cur.champs || [])];
+    champs[slot] = champId || null;
+    setOrbCfg(i, { champs });
+  };
+  const pickDropPlan = (v) => setOvKey({ dropPlanIndex: v, dropConfig: null }); // テーブル変更でオーブ設定リセット
+  const clearOrbs = () => setOvKey({ dropConfig: null });
+  const dropSetCount = dcOrbs.filter(o => o && (o.round || o.outcome || o.compId || (o.champs || []).some(Boolean))).length;
+  const ORB_META = {
+    comp: { icon: '🔩', label: '素材',    color: 'rgba(255,255,255,0.85)' },
+    GRAY: { icon: '⚪', label: '灰オーブ', color: '#aab4c0' },
+    BLUE: { icon: '🔵', label: '青オーブ', color: '#5b9dff' },
+  };
+  const selStyle = { padding:'9px 10px', borderRadius:8, background:'rgba(15,23,42,0.9)', color:'#fff', border:'1px solid var(--border)', fontSize:12.5, fontFamily:'Noto Sans JP', cursor:'pointer' };
+  const iconUrl = (key) => DROP_ICONS[key] || getMetaTFTItemUrl(key);
+
+  return (
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14, padding: 16,
+      backgroundImage: `linear-gradient(rgba(0,0,0,0.82), rgba(0,0,0,0.82)), url("https://assets.st-note.com/production/uploads/images/263587712/rectangle_large_type_2_386d7257054746a6649e14bdb1432725.jpeg?width=4000&height=4000&fit=bounds&format=jpg&quality=90")`,
+      backgroundSize: 'cover', backgroundPosition: 'center', animation: 'fadeIn 0.4s ease' }}>
+      <div style={{ fontFamily: 'Orbitron', fontSize: 'clamp(18px,4vw,30px)', fontWeight: 900, color: '#fff', letterSpacing: 4, textShadow: '0 0 10px rgba(0,0,0,0.9), 0 0 18px var(--gold)', marginTop: 4 }}>📦 ドロップを指定</div>
+
+      <div style={{ width: 'min(980px, 96vw)', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 12, background: 'rgba(8,16,26,0.85)', border: '1px solid var(--border)', borderRadius: 16, padding: 16, boxShadow: '0 20px 60px rgba(0,0,0,0.6)' }}>
+
+        {/* ① テーブル選択 */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', flexShrink: 0 }}>
+          <span style={{ color: 'var(--gold2)', fontWeight: 900, fontSize: 13 }}>① ドロップテーブル:</span>
+          <select style={{ ...selStyle, flex: 1, minWidth: 200 }} value={ov.dropPlanIndex == null ? '' : String(ov.dropPlanIndex)} onChange={e => pickDropPlan(e.target.value === '' ? null : Number(e.target.value))}>
+            <option value="">ランダム</option>
+            {DROP_PLANS.map((d, i) => (<option key={i} value={i}>{d.label}</option>))}
+          </select>
+        </div>
+        <div style={{ color: 'rgba(255,255,255,0.55)', fontSize: 11.5, lineHeight: 1.6, flexShrink: 0 }}>
+          テーブルを選ぶと下に各オーブが表示され、② 落ちるラウンドと ③ 中身・チャンピオンを個別に固定できます。「自動 / ランダム」のままの項目は従来通りの抽選です。
+        </div>
+
+        {/* ②③ オーブカードのグリッド */}
+        <div style={{ flex: 1, minHeight: 80, overflowY: 'auto', paddingRight: 4 }}>
+          {!dropPlanSel ? (
+            <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'rgba(255,255,255,0.4)', fontSize: 13, fontWeight: 700 }}>
+              まずドロップテーブルを選択してください
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(400px, 1fr))', gap: 10 }}>
+              {dropChips.map((t, i) => {
+                const cfg = dcOrbs[i] || {};
+                const meta = ORB_META[t];
+                const typeNum = dropChips.slice(0, i).filter(x => x === t).length + 1; // 種類ごと番号
+                const outcomes = t === 'comp' ? null : ORB_OUTCOMES[t];
+                const selOutcome = cfg.outcome ? (outcomes || []).find(o => o.id === cfg.outcome) : null;
+                const selCompItem = cfg.compId ? compItems.find(c => c.id === cfg.compId) : null;
+                const hasAny = !!(cfg.round || cfg.outcome || cfg.compId || (cfg.champs || []).some(Boolean));
+                return (
+                  <div key={i} style={{ background: 'rgba(15,23,42,0.6)', border: `2px solid ${hasAny ? 'var(--gold2)' : 'var(--border)'}`, borderRadius: 12, padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {/* カードヘッダー：種別＋ラウンド */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <span style={{ fontSize: 13.5, fontWeight: 900, color: meta.color, display: 'inline-flex', alignItems: 'center', gap: 7, flex: 1 }}>
+                        {t === 'comp'
+                          ? <img src={DROP_ICONS.comp} style={{ width: 26, height: 26, borderRadius: 5, flexShrink: 0 }} />
+                          : <span style={{ fontSize: 17 }}>{meta.icon}</span>}
+                        {meta.label} {typeNum}
+                      </span>
+                      <span style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.55)' }}>ラウンド:</span>
+                      <select style={{ ...selStyle, padding: '7px 9px', fontSize: 12 }} value={cfg.round || ''} onChange={e => setOrbCfg(i, { round: e.target.value || null })}>
+                        <option value="">自動</option>
+                        <option value="1-2">1-2</option>
+                        <option value="1-3">1-3</option>
+                        <option value="1-4">1-4</option>
+                      </select>
+                    </div>
+
+                    {/* 内容 */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.55)', flexShrink: 0 }}>内容:</span>
+                      {t === 'comp' ? (
+                        <React.Fragment>
+                          {selCompItem && <img src={getMetaTFTItemUrl(selCompItem.name)} style={{ width: 26, height: 26, borderRadius: 5, border: '1px solid var(--gold)', background: '#1e293b', flexShrink: 0 }} />}
+                          <select style={{ ...selStyle, flex: 1, minWidth: 0, padding: '7px 9px', fontSize: 12 }} value={cfg.compId || ''} onChange={e => setOrbCfg(i, { compId: e.target.value || null })}>
+                            <option value="">ランダム</option>
+                            {compItems.map(it => (<option key={it.id} value={it.id}>{getJaName(it.name)}</option>))}
+                          </select>
+                        </React.Fragment>
+                      ) : (
+                        <React.Fragment>
+                          {selOutcome && (
+                            <span style={{ display: 'inline-flex', gap: 3, alignItems: 'center', flexShrink: 0 }}>
+                              {selOutcome.icons.map((k, j) => (
+                                <img key={j} src={iconUrl(k)} style={{ width: 24, height: 24, borderRadius: 4, border: '1px solid var(--border)', background: '#1e293b' }} />
+                              ))}
+                            </span>
+                          )}
+                          <select style={{ ...selStyle, flex: 1, minWidth: 0, padding: '7px 9px', fontSize: 12 }} value={cfg.outcome || ''} onChange={e => setOrbCfg(i, { outcome: e.target.value || null, champs: [] })}>
+                            <option value="">ランダム</option>
+                            {outcomes.map(o => (<option key={o.id} value={o.id}>{o.label}</option>))}
+                          </select>
+                        </React.Fragment>
+                      )}
+                    </div>
+
+                    {/* チャンピオン指定（縦積み・列揃え） */}
+                    {selOutcome && selOutcome.champs.length > 0 && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingLeft: 6 }}>
+                        <span style={{ fontSize: 11, color: 'var(--gold2)', fontWeight: 700 }}>└ チャンピオン:</span>
+                        {selOutcome.champs.map((cost, slot) => {
+                          const selChampId = (cfg.champs || [])[slot];
+                          const selChamp = selChampId ? champsByCost(cost).find(c => c.id === selChampId) : null;
+                          return (
+                            <div key={slot} style={{ display: 'flex', gap: 7, alignItems: 'center', paddingLeft: 14 }}>
+                              <img src={selChamp ? boardIcon(selChamp.img) : DROP_ICONS['c' + cost]}
+                                style={{ width: 30, height: 30, borderRadius: 6, border: `2px solid ${selChamp ? COST_COLORS[cost] : 'var(--border)'}`, background: '#1e293b', objectFit: 'cover', flexShrink: 0 }} />
+                              <select style={{ ...selStyle, flex: 1, minWidth: 0, padding: '7px 9px', fontSize: 12 }} value={selChampId || ''} onChange={e => setOrbChamp(i, slot, e.target.value || null)}>
+                                <option value="">ランダム（{cost}コス）</option>
+                                {champsByCost(cost).map(c => (<option key={c.id} value={c.id}>{c.jaName}</option>))}
+                              </select>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* フッター */}
+        <div style={{ display: 'flex', gap: 10, flexShrink: 0 }}>
+          <button onClick={clearOrbs} disabled={dropSetCount === 0}
+            style={{ flex: '0 0 auto', padding: '11px 16px', borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: dropSetCount === 0 ? 'default' : 'pointer',
+              color: '#fff', background: dropSetCount === 0 ? 'rgba(80,20,20,0.35)' : 'rgba(80,20,20,0.7)', border: '1px solid var(--red)', opacity: dropSetCount === 0 ? 0.5 : 1 }}>
+            ↺ オーブ設定をクリア
+          </button>
+          <button onClick={onBack} className="menu-btn" style={{ flex: 1, background: 'var(--blue)', color: '#fff', borderColor: 'var(--blue)', fontWeight: 900 }}>
+            ✓ 設定に戻る{dropPlanSel ? `（${dropSetCount}件指定中）` : ''}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ── メインアプリ ── */
 /* ── メインアプリ ── */
 function SettingsScreen({ bindings, onChange, overrides = DEFAULT_OVERRIDES, onChangeOverrides = () => {}, onBack, onStartNewGame = null, backLabel = 'メニューに戻る' }) {
@@ -1439,6 +1613,7 @@ function SettingsScreen({ bindings, onChange, overrides = DEFAULT_OVERRIDES, onC
   const [note, setNote] = useState('');
   const [ov, setOv] = useState(overrides);          // 🌟 ゲーム内設定のオーバーライド
   const [augPickerOpen, setAugPickerOpen] = useState(false); // 🌟 オーグメント指定の別画面
+  const [dropPickerOpen, setDropPickerOpen] = useState(false); // 🌟 ドロップ設定の別画面
 
   // 入力待ち中：次に押されたキーを割り当てる
   useEffect(() => {
@@ -1525,39 +1700,10 @@ function SettingsScreen({ bindings, onChange, overrides = DEFAULT_OVERRIDES, onC
     setOvKey({ augmentPicks: anySet ? next : null });
   };
 
-  // 🌟 ===== ドロップ設定（テーブル → オーブごとの順番・内容） =====
+  // 🌟 ===== ドロップ設定（別画面ピッカーで設定） =====
   const dropPlanSel = (ov.dropPlanIndex != null && DROP_PLANS[ov.dropPlanIndex]) ? DROP_PLANS[ov.dropPlanIndex] : null;
-  const dropChips = dropPlanSel ? [
-    ...Array(dropPlanSel.plan.comp).fill('comp'),
-    ...Array(dropPlanSel.plan.gray).fill('GRAY'),
-    ...Array(dropPlanSel.plan.blue).fill('BLUE'),
-  ] : [];
   const dcOrbs = (ov.dropConfig && ov.dropConfig.planIndex === ov.dropPlanIndex && Array.isArray(ov.dropConfig.orbs)) ? ov.dropConfig.orbs : [];
-  const compItems = (typeof ITEMS !== 'undefined' ? ITEMS : []).filter(it => it.type === 'comp' && it.id !== 'spatula' && it.id !== 'pan');
-  const champsByCost = (cost) => (typeof CHAMPS !== 'undefined' ? CHAMPS : []).filter(c => c.cost === cost);
-  const setOrbCfg = (i, patch) => {
-    const orbs = dropChips.map((t, k) => {
-      const cur = { ...(dcOrbs[k] || {}) };
-      return k === i ? { ...cur, ...patch } : cur;
-    });
-    const any = orbs.some(o => o.round || o.outcome || o.compId || (o.champs || []).some(Boolean));
-    setOvKey({ dropConfig: any ? { planIndex: ov.dropPlanIndex, orbs } : null });
-  };
-  const setOrbChamp = (i, slot, champId) => {
-    const cur = dcOrbs[i] || {};
-    const champs = [...(cur.champs || [])];
-    champs[slot] = champId || null;
-    setOrbCfg(i, { champs });
-  };
-  const pickDropPlan = (v) => {
-    // テーブル変更時はオーブ設定をリセット（構成が変わるため）
-    setOvKey({ dropPlanIndex: v, dropConfig: null });
-  };
-  const ORB_META = {
-    comp: { icon: '🔩', label: '素材',    color: 'rgba(255,255,255,0.7)' },
-    GRAY: { icon: '⚪', label: '灰オーブ', color: '#aab4c0' },
-    BLUE: { icon: '🔵', label: '青オーブ', color: '#5b9dff' },
-  };
+  const dropSetCount = dcOrbs.filter(o => o && (o.round || o.outcome || o.compId || (o.champs || []).some(Boolean))).length;
 
   // スタイル
   const secTitle = { color:'#fff', fontWeight:900, fontSize:14, marginTop:22, marginBottom:10, borderTop:'1px solid var(--border)', paddingTop:16 };
@@ -1577,6 +1723,17 @@ function SettingsScreen({ bindings, onChange, overrides = DEFAULT_OVERRIDES, onC
         value={augPickerValue}
         onChange={applyAugPicks}
         onBack={() => setAugPickerOpen(false)}
+      />
+    );
+  }
+
+  // 🌟 ドロップ設定も専用の別画面で行う
+  if (dropPickerOpen) {
+    return (
+      <DropPickerScreen
+        ov={ov}
+        setOvKey={setOvKey}
+        onBack={() => setDropPickerOpen(false)}
       />
     );
   }
@@ -1735,109 +1892,24 @@ function SettingsScreen({ bindings, onChange, overrides = DEFAULT_OVERRIDES, onC
           ))}
         </div>
 
-        {/* 📦 ドロップ設定（テーブル → 順番 → 内容） */}
+        {/* 📦 ドロップ設定（別画面ピッカー） */}
         <div style={{ marginBottom:16 }}>
-          <div style={fLabel}>📦 ドロップ設定</div>
-          <div style={{ color:'rgba(255,255,255,0.55)', fontSize:11, marginBottom:8, lineHeight:1.5 }}>
-            ① テーブルを選ぶと、② 各オーブの落ちるラウンドと ③ 中身を個別に指定できます。「自動/ランダム」のままの項目は従来通りです。
-          </div>
-
-          {/* ① テーブル選択 */}
-          <select style={selStyle} value={ov.dropPlanIndex == null ? '' : String(ov.dropPlanIndex)} onChange={e => pickDropPlan(e.target.value === '' ? null : Number(e.target.value))}>
-            <option value="">ランダム</option>
-            {DROP_PLANS.map((d, i) => (<option key={i} value={i}>{d.label}</option>))}
-          </select>
-
-          {/* ②③ オーブごとの設定（テーブル選択時のみ表示） */}
-          {dropPlanSel && (
-            <div style={{ marginTop:10, display:'flex', flexDirection:'column', gap:8 }}>
-              {dropChips.map((t, i) => {
-                const cfg = dcOrbs[i] || {};
-                const meta = ORB_META[t];
-                // 🌟 種類ごとの通し番号（灰4ではなく灰1のように振り直す）
-                const typeNum = dropChips.slice(0, i).filter(x => x === t).length + 1;
-                const outcomes = t === 'comp' ? null : ORB_OUTCOMES[t];
-                const selOutcome = cfg.outcome ? (outcomes || []).find(o => o.id === cfg.outcome) : null;
-                // アイコンURL解決: DROP_ICONSキー or metatftアイテム名
-                const iconUrl = (key) => DROP_ICONS[key] || getMetaTFTItemUrl(key);
-                const iconImg = (key, k) => (
-                  <img key={k} src={iconUrl(key)} style={{ width:22, height:22, borderRadius:4, border:'1px solid var(--border)', background:'#1e293b', flexShrink:0 }} />
-                );
-                const selCompItem = cfg.compId ? compItems.find(c => c.id === cfg.compId) : null;
-                return (
-                  <div key={i} style={{ background:'rgba(15,23,42,0.55)', border:'1px solid var(--border)', borderRadius:10, padding:'10px 12px', display:'flex', flexDirection:'column', gap:8 }}>
-                    {/* 行ヘッダー：種別＋ラウンド */}
-                    <div style={{ display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
-                      <span style={{ fontSize:12.5, fontWeight:900, color:meta.color, minWidth:100, display:'inline-flex', alignItems:'center', gap:6 }}>
-                        {t === 'comp'
-                          ? <img src={DROP_ICONS.comp} style={{ width:22, height:22, borderRadius:4, flexShrink:0 }} />
-                          : <span style={{ fontSize:15 }}>{meta.icon}</span>}
-                        {meta.label} {typeNum}
-                      </span>
-                      <span style={{ fontSize:11, color:'rgba(255,255,255,0.5)' }}>ラウンド:</span>
-                      <select style={{ ...selStyle, width:'auto', padding:'6px 8px', fontSize:12 }} value={cfg.round || ''} onChange={e => setOrbCfg(i, { round: e.target.value || null })}>
-                        <option value="">自動</option>
-                        <option value="1-2">1-2</option>
-                        <option value="1-3">1-3</option>
-                        <option value="1-4">1-4</option>
-                      </select>
-
-                      {/* 内容選択：素材はアイテム直接、オーブは結果テーブル */}
-                      <span style={{ fontSize:11, color:'rgba(255,255,255,0.5)' }}>内容:</span>
-                      {t === 'comp' ? (
-                        <React.Fragment>
-                          {/* 選択中の素材アイテムのアイコンをプレビュー */}
-                          {selCompItem && <img src={getMetaTFTItemUrl(selCompItem.name)} style={{ width:22, height:22, borderRadius:4, border:'1px solid var(--gold)', background:'#1e293b', flexShrink:0 }} />}
-                          <select style={{ ...selStyle, width:'auto', flex:1, minWidth:120, padding:'6px 8px', fontSize:12 }} value={cfg.compId || ''} onChange={e => setOrbCfg(i, { compId: e.target.value || null })}>
-                            <option value="">ランダム</option>
-                            {compItems.map(it => (<option key={it.id} value={it.id}>{getJaName(it.name)}</option>))}
-                          </select>
-                        </React.Fragment>
-                      ) : (
-                        <React.Fragment>
-                          {/* 選択中の内容のアイコン列をプレビュー */}
-                          {selOutcome && (
-                            <span style={{ display:'inline-flex', gap:3, alignItems:'center' }}>
-                              {selOutcome.icons.map((k, j) => iconImg(k, j))}
-                            </span>
-                          )}
-                          <select style={{ ...selStyle, width:'auto', flex:1, minWidth:150, padding:'6px 8px', fontSize:12 }} value={cfg.outcome || ''} onChange={e => setOrbCfg(i, { outcome: e.target.value || null, champs: [] })}>
-                            <option value="">ランダム</option>
-                            {outcomes.map(o => (<option key={o.id} value={o.id}>{o.label}</option>))}
-                          </select>
-                        </React.Fragment>
-                      )}
-                    </div>
-
-                    {/* ③ 詳細：チャンピオン指定枠（結果にチャンピオンが含まれる場合） */}
-                    {selOutcome && selOutcome.champs.length > 0 && (
-                      <div style={{ display:'flex', gap:8, flexWrap:'wrap', alignItems:'center', paddingLeft:8 }}>
-                        <span style={{ fontSize:11, color:'var(--gold2)', fontWeight:700 }}>└ チャンピオン:</span>
-                        {selOutcome.champs.map((cost, slot) => {
-                          const selChampId = (cfg.champs || [])[slot];
-                          const selChamp = selChampId ? champsByCost(cost).find(c => c.id === selChampId) : null;
-                          return (
-                            <span key={slot} style={{ display:'inline-flex', gap:4, alignItems:'center' }}>
-                              {/* 選択中はチャンピオンの顔、未選択はコストアイコン */}
-                              <img src={selChamp ? boardIcon(selChamp.img) : DROP_ICONS['c' + cost]}
-                                style={{ width:26, height:26, borderRadius:5, border:`1px solid ${selChamp ? COST_COLORS[cost] : 'var(--border)'}`, background:'#1e293b', objectFit:'cover', flexShrink:0 }} />
-                              <select style={{ ...selStyle, width:'auto', padding:'6px 8px', fontSize:12 }} value={selChampId || ''} onChange={e => setOrbChamp(i, slot, e.target.value || null)}>
-                                <option value="">ランダム（{cost}コス）</option>
-                                {champsByCost(cost).map(c => (<option key={c.id} value={c.id}>{c.jaName}</option>))}
-                              </select>
-                            </span>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-              {dcOrbs.some(o => o && (o.round || o.outcome || o.compId || (o.champs || []).some(Boolean))) && (
-                <button onClick={() => setOvKey({ dropConfig: null })} style={{ ...chip(false,false), fontSize:11, alignSelf:'flex-start' }}>↺ オーブ設定をクリア</button>
-              )}
-            </div>
-          )}
+          <div style={fLabel}>📦 ドロップ設定 <span style={{ color:'rgba(255,255,255,0.45)', fontWeight:400 }}>（テーブル・順番・中身を固定）</span></div>
+          <button
+            onClick={() => setDropPickerOpen(true)}
+            style={{ width:'100%', padding:'13px 16px', borderRadius:10, cursor:'pointer', fontFamily:'Noto Sans JP', fontWeight:900, fontSize:13.5,
+              display:'flex', alignItems:'center', justifyContent:'center', gap:10, transition:'all 0.15s',
+              color: dropPlanSel ? '#08101a' : '#fff',
+              background: dropPlanSel ? 'var(--gold2)' : 'rgba(15,23,42,0.85)',
+              border:`2px solid ${dropPlanSel ? 'var(--gold2)' : 'var(--blue)'}`,
+              boxShadow: dropPlanSel ? '0 0 14px var(--gold)' : 'none' }}>
+            ドロップを指定
+            <span style={{ fontSize:11, fontWeight:700, padding:'2px 8px', borderRadius:20,
+              background: dropPlanSel ? 'rgba(8,16,26,0.25)' : 'rgba(255,255,255,0.12)',
+              color: dropPlanSel ? '#08101a' : 'rgba(255,255,255,0.8)' }}>
+              {dropPlanSel ? `${dropPlanSel.label.replace(/【(BASE|HIGH)】/, '')}${dropSetCount > 0 ? ` ・ ${dropSetCount}件指定` : ''}` : '未指定'}
+            </span>
+          </button>
         </div>
 
         {/* オーグメント指定（別画面ピッカー） */}
