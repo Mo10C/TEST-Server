@@ -145,8 +145,9 @@ const isAdminAccount = (acct) => {
 
 // Riot ID 連携：Cloudflare Worker プロキシ経由で puuid とTFTランクを取得
 async function linkRiotAccount(riotIdInput) {
-  const proxy = (SIM_CFG.riotProxyUrl || '').replace(/\/+$/, '');
+  let proxy = (SIM_CFG.riotProxyUrl || '').trim().replace(/\/+$/, '');
   if (!proxy) throw new Error('sim-config.js の riotProxyUrl が未設定です');
+  if (!/^https?:\/\//.test(proxy)) proxy = 'https://' + proxy;  // https:// の付け忘れを自動補正
   const parts = (riotIdInput || '').split('#');
   if (parts.length !== 2 || !parts[0].trim() || !parts[1].trim()) throw new Error('Riot ID は「名前#タグ」の形式で入力してください');
   const accRes = await fetch(`${proxy}/riot/account/v1/accounts/by-riot-id/${encodeURIComponent(parts[0].trim())}/${encodeURIComponent(parts[1].trim())}`);

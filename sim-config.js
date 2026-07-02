@@ -16,7 +16,7 @@ window.SIM_CONFIG = {
   /* 🎮 Riot ID 連携用の Cloudflare Worker プロキシURL（末尾スラッシュなし）
      例: 'https://tft-riot-proxy.xxxx.workers.dev'
      Worker は /riot/account/... と /tft/league/... をRiot APIへ転送する想定 */
-  riotProxyUrl: 'tft-sim-riot-proxy.moto-moto-tennis.workers.dev',
+  riotProxyUrl: 'https://tft-sim-riot-proxy.moto-moto-tennis.workers.dev',
 
   /* 💬 Discord 連携用のアプリケーションID（Discord Developer Portal）
      OAuth2 > Redirects にこのシミュレーターのURLを登録しておくこと */
