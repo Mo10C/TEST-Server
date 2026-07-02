@@ -68,10 +68,14 @@ function loadOverrides() {
    下の SEED_STATS_CONFIG に apiKey / projectId を入れると全ユーザーで共有される。
    未設定の場合は localStorage のみ（このブラウザの自分の記録だけ）で動作する。
    Firestore 側は該当コレクションに read/write を許可するルールが必要。 */
-const SEED_STATS_CONFIG = {
-  apiKey: '',                      // Firebase コンソール > プロジェクトの設定 > ウェブAPIキー
-  projectId: '',                   // Firebase プロジェクトID
-  collection: 'sim_seed_stats',    // 保存先コレクション名
+const firebaseConfig = {
+  apiKey: "AIzaSyDeg92vX9vqWODJ8TbufZv_-H2abGEDLfo",
+  authDomain: "st-simulator.firebaseapp.com",
+  projectId: "st-simulator",
+  storageBucket: "st-simulator.firebasestorage.app",
+  messagingSenderId: "717010865771",
+  appId: "1:717010865771:web:83c3c74c7a1f8a73cd2b2e",
+  measurementId: "G-RWSQLM1P3H"
 };
 const seedStatsShared = () => !!(SEED_STATS_CONFIG.apiKey && SEED_STATS_CONFIG.projectId);
 const SEED_STATS_LOCAL_KEY = 'tft_sim_seed_stats_v1';
