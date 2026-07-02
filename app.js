@@ -40,11 +40,21 @@ const DEFAULT_OVERRIDES = {
   psionic: null,      // [name(初手), name(2手目)]
   augmentTier: null,  // 'silver' | 'gold' | 'prismatic'
   dropPlanIndex: null,// DROP_PLANS の index
+  // 🌟 ドロップ設定：オーブごとのラウンド指定・内容指定
+  //   { planIndex, orbs:[{ round, outcome, champs:[champId...], compId }] }
+  //   orbs の並びは comp×n → GRAY×n → BLUE×n（選択中プランの構成と同順）
+  //   planIndex が dropPlanIndex と一致する時のみ有効。
+  dropConfig: null,
   // 🌟 チート：2-1で提示されるオーグメントを任意指定
   //   { initial:[id|null,id|null,id|null], reroll:[id|null,id|null,id|null] }
   //   initial = 最初に出る3枠 / reroll = 各枠を再抽選したとき最初に出る3枠。
   //   null または各要素null＝その枠はランダム（従来通り）。ティアはまたいで指定可。
-  augmentPicks: null
+  augmentPicks: null,
+  // 🌟 チート：ドロップの順番と内容を任意指定
+  //   { sequence: [ { orb:'comp'|'GRAY'|'BLUE', outcome:string|null, champs:[id|null,..]|null, itemId:string|null } ] }
+  //   sequence があれば dropPlanIndex のプランに代わり、この順番・内容でドロップする。
+  //   outcome/champs/itemId が null の部分は従来通りランダム。
+  dropSetup: null
 };
 const OVERRIDE_STORAGE_KEY = 'tft_set17_overrides_v1';
 function loadOverrides() {
@@ -72,6 +82,26 @@ const DROP_PLANS = [
   { label: '【HIGH】素材3 / 灰0 / 青2', plan: { comp: 3, gray: 0, blue: 2 } },
   { label: '【HIGH】素材3 / 灰5 / 青0', plan: { comp: 3, gray: 5, blue: 0 } },
 ];
+
+// 🌟 オーブ内容の選択肢（executeOrbDrop の抽選テーブルと1:1対応）
+//    champs: 指定可能なチャンピオン枠のコスト配列
+const ORB_OUTCOMES = {
+  GRAY: [
+    { id: 'g_1c2',     label: '1コスト×2体',            champs: [1, 1] },
+    { id: 'g_2c1',     label: '2コスト×1体',            champs: [2] },
+    { id: 'g_reforge', label: '再合成 + 2G',            champs: [] },
+    { id: 'g_remover', label: '除去装置 + 2G',          champs: [] },
+    { id: 'g_dupe',    label: '小型複製機',             champs: [] },
+  ],
+  BLUE: [
+    { id: 'b_3c2',       label: '3コスト×2体',              champs: [3, 3] },
+    { id: 'b_3c1g',      label: '3コスト×1体 + 3G',         champs: [3] },
+    { id: 'b_2c3',       label: '2コスト×3体',              champs: [2, 2, 2] },
+    { id: 'b_dupe_2c2',  label: '小型複製機 + 2コスト×2体', champs: [2, 2] },
+    { id: 'b_reforge',   label: '再合成 + 6G',              champs: [] },
+    { id: 'b_cdupe_3c1', label: '複製機 + 3コスト×1体',     champs: [3] },
+  ],
+};
 
 // 星の観測者の星座名（短縮ラベル）を取り出す
 function stargazerShort(v) {
@@ -1485,6 +1515,40 @@ function SettingsScreen({ bindings, onChange, overrides = DEFAULT_OVERRIDES, onC
     setOvKey({ augmentPicks: anySet ? next : null });
   };
 
+  // 🌟 ===== ドロップ設定（テーブル → オーブごとの順番・内容） =====
+  const dropPlanSel = (ov.dropPlanIndex != null && DROP_PLANS[ov.dropPlanIndex]) ? DROP_PLANS[ov.dropPlanIndex] : null;
+  const dropChips = dropPlanSel ? [
+    ...Array(dropPlanSel.plan.comp).fill('comp'),
+    ...Array(dropPlanSel.plan.gray).fill('GRAY'),
+    ...Array(dropPlanSel.plan.blue).fill('BLUE'),
+  ] : [];
+  const dcOrbs = (ov.dropConfig && ov.dropConfig.planIndex === ov.dropPlanIndex && Array.isArray(ov.dropConfig.orbs)) ? ov.dropConfig.orbs : [];
+  const compItems = (typeof ITEMS !== 'undefined' ? ITEMS : []).filter(it => it.type === 'comp' && it.id !== 'spatula' && it.id !== 'pan');
+  const champsByCost = (cost) => (typeof CHAMPS !== 'undefined' ? CHAMPS : []).filter(c => c.cost === cost);
+  const setOrbCfg = (i, patch) => {
+    const orbs = dropChips.map((t, k) => {
+      const cur = { ...(dcOrbs[k] || {}) };
+      return k === i ? { ...cur, ...patch } : cur;
+    });
+    const any = orbs.some(o => o.round || o.outcome || o.compId || (o.champs || []).some(Boolean));
+    setOvKey({ dropConfig: any ? { planIndex: ov.dropPlanIndex, orbs } : null });
+  };
+  const setOrbChamp = (i, slot, champId) => {
+    const cur = dcOrbs[i] || {};
+    const champs = [...(cur.champs || [])];
+    champs[slot] = champId || null;
+    setOrbCfg(i, { champs });
+  };
+  const pickDropPlan = (v) => {
+    // テーブル変更時はオーブ設定をリセット（構成が変わるため）
+    setOvKey({ dropPlanIndex: v, dropConfig: null });
+  };
+  const ORB_META = {
+    comp: { icon: '🔩', label: '素材',    color: 'rgba(255,255,255,0.7)' },
+    GRAY: { icon: '⚪', label: '灰オーブ', color: '#aab4c0' },
+    BLUE: { icon: '🔵', label: '青オーブ', color: '#5b9dff' },
+  };
+
   // スタイル
   const secTitle = { color:'#fff', fontWeight:900, fontSize:14, marginTop:22, marginBottom:10, borderTop:'1px solid var(--border)', paddingTop:16 };
   const fLabel = { color:'rgba(255,255,255,0.85)', fontWeight:700, fontSize:12.5, marginBottom:6 };
@@ -1661,13 +1725,75 @@ function SettingsScreen({ bindings, onChange, overrides = DEFAULT_OVERRIDES, onC
           ))}
         </div>
 
-        {/* アイテムドロップテーブル */}
-        <div style={{ marginBottom:8 }}>
-          <div style={fLabel}>アイテムドロップテーブル <span style={{ color:'rgba(255,255,255,0.45)', fontWeight:400 }}>（素材/灰オーブ/青オーブ）</span></div>
-          <select style={selStyle} value={ov.dropPlanIndex == null ? '' : String(ov.dropPlanIndex)} onChange={e => setOvKey({ dropPlanIndex: e.target.value === '' ? null : Number(e.target.value) })}>
+        {/* 📦 ドロップ設定（テーブル → 順番 → 内容） */}
+        <div style={{ marginBottom:16 }}>
+          <div style={fLabel}>📦 ドロップ設定</div>
+          <div style={{ color:'rgba(255,255,255,0.55)', fontSize:11, marginBottom:8, lineHeight:1.5 }}>
+            ① テーブルを選ぶと、② 各オーブの落ちるラウンドと ③ 中身を個別に指定できます。「自動/ランダム」のままの項目は従来通りです。
+          </div>
+
+          {/* ① テーブル選択 */}
+          <select style={selStyle} value={ov.dropPlanIndex == null ? '' : String(ov.dropPlanIndex)} onChange={e => pickDropPlan(e.target.value === '' ? null : Number(e.target.value))}>
             <option value="">ランダム</option>
             {DROP_PLANS.map((d, i) => (<option key={i} value={i}>{d.label}</option>))}
           </select>
+
+          {/* ②③ オーブごとの設定（テーブル選択時のみ表示） */}
+          {dropPlanSel && (
+            <div style={{ marginTop:10, display:'flex', flexDirection:'column', gap:8 }}>
+              {dropChips.map((t, i) => {
+                const cfg = dcOrbs[i] || {};
+                const meta = ORB_META[t];
+                const outcomes = t === 'comp' ? null : ORB_OUTCOMES[t];
+                const selOutcome = cfg.outcome ? (outcomes || []).find(o => o.id === cfg.outcome) : null;
+                return (
+                  <div key={i} style={{ background:'rgba(15,23,42,0.55)', border:'1px solid var(--border)', borderRadius:10, padding:'10px 12px', display:'flex', flexDirection:'column', gap:8 }}>
+                    {/* 行ヘッダー：種別＋ラウンド */}
+                    <div style={{ display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
+                      <span style={{ fontSize:12.5, fontWeight:900, color:meta.color, minWidth:86 }}>{meta.icon} {meta.label} {i+1}</span>
+                      <span style={{ fontSize:11, color:'rgba(255,255,255,0.5)' }}>ラウンド:</span>
+                      <select style={{ ...selStyle, width:'auto', padding:'6px 8px', fontSize:12 }} value={cfg.round || ''} onChange={e => setOrbCfg(i, { round: e.target.value || null })}>
+                        <option value="">自動</option>
+                        <option value="1-2">1-2</option>
+                        <option value="1-3">1-3</option>
+                        <option value="1-4">1-4</option>
+                      </select>
+
+                      {/* 内容選択：素材はアイテム直接、オーブは結果テーブル */}
+                      <span style={{ fontSize:11, color:'rgba(255,255,255,0.5)' }}>内容:</span>
+                      {t === 'comp' ? (
+                        <select style={{ ...selStyle, width:'auto', flex:1, minWidth:120, padding:'6px 8px', fontSize:12 }} value={cfg.compId || ''} onChange={e => setOrbCfg(i, { compId: e.target.value || null })}>
+                          <option value="">ランダム</option>
+                          {compItems.map(it => (<option key={it.id} value={it.id}>{getJaName ? getJaName(it.name) : it.name}</option>))}
+                        </select>
+                      ) : (
+                        <select style={{ ...selStyle, width:'auto', flex:1, minWidth:150, padding:'6px 8px', fontSize:12 }} value={cfg.outcome || ''} onChange={e => setOrbCfg(i, { outcome: e.target.value || null, champs: [] })}>
+                          <option value="">ランダム</option>
+                          {outcomes.map(o => (<option key={o.id} value={o.id}>{o.label}</option>))}
+                        </select>
+                      )}
+                    </div>
+
+                    {/* ③ 詳細：チャンピオン指定枠（結果にチャンピオンが含まれる場合） */}
+                    {selOutcome && selOutcome.champs.length > 0 && (
+                      <div style={{ display:'flex', gap:6, flexWrap:'wrap', alignItems:'center', paddingLeft:8 }}>
+                        <span style={{ fontSize:11, color:'var(--gold2)', fontWeight:700 }}>└ チャンピオン:</span>
+                        {selOutcome.champs.map((cost, slot) => (
+                          <select key={slot} style={{ ...selStyle, width:'auto', padding:'6px 8px', fontSize:12 }} value={(cfg.champs || [])[slot] || ''} onChange={e => setOrbChamp(i, slot, e.target.value || null)}>
+                            <option value="">ランダム（{cost}コス）</option>
+                            {champsByCost(cost).map(c => (<option key={c.id} value={c.id}>{c.jaName}</option>))}
+                          </select>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              {dcOrbs.some(o => o && (o.round || o.outcome || o.compId || (o.champs || []).some(Boolean))) && (
+                <button onClick={() => setOvKey({ dropConfig: null })} style={{ ...chip(false,false), fontSize:11, alignSelf:'flex-start' }}>↺ オーブ設定をクリア</button>
+              )}
+            </div>
+          )}
         </div>
 
         {/* オーグメント指定（別画面ピッカー） */}
@@ -2710,20 +2836,59 @@ useEffect(() => {
       drops[targetRound].push(shuffled.pop());
     }
 
-    return drops;
+    // 🌟 ============ ドロップ設定（ラウンド指定・内容指定）を適用 ============
+    //    自然な抽選・配分は上で全て消費済み。ここからは結果の並べ替えと
+    //    内容cfgの紐付けのみ（乱数は追加消費しない → シード互換を維持）。
+    const cfgs = { '1-2': drops['1-2'].map(() => null), '1-3': drops['1-3'].map(() => null), '1-4': drops['1-4'].map(() => null) };
+    const dc = gameOverrides && gameOverrides.dropConfig;
+    if (dc && Array.isArray(dc.orbs) && ovIdx != null && dc.planIndex === ovIdx) {
+      // チップ並び：設定UIと同じ comp×n → GRAY×n → BLUE×n
+      const chips = [];
+      for (let i = 0; i < plan.comp; i++) chips.push('comp');
+      for (let i = 0; i < plan.gray; i++) chips.push('GRAY');
+      for (let i = 0; i < plan.blue; i++) chips.push('BLUE');
+      chips.forEach((t, i) => {
+        const cfg = dc.orbs[i];
+        if (!cfg) return;
+        const hasContent = !!(cfg.outcome || cfg.compId || (cfg.champs || []).some(Boolean));
+        const pin = (cfg.round && rounds.includes(cfg.round)) ? cfg.round : null;
+        if (!hasContent && !pin) return;
+        if (pin) {
+          // 自然配置から未割当の同タイプを1個抜き、指定ラウンドへ移動
+          for (const r of rounds) {
+            const k = drops[r].findIndex((dt, j) => dt === t && cfgs[r][j] === null);
+            if (k !== -1) {
+              drops[r].splice(k, 1); cfgs[r].splice(k, 1);
+              drops[pin].push(t); cfgs[pin].push(cfg);
+              break;
+            }
+          }
+        } else {
+          // ラウンド自動：自然配置順（1-2→1-3→1-4）の最初の未割当同タイプに内容を紐付け
+          for (const r of rounds) {
+            const k = drops[r].findIndex((dt, j) => dt === t && cfgs[r][j] === null);
+            if (k !== -1) { cfgs[r][k] = cfg; break; }
+          }
+        }
+      });
+    }
+
+    return { rounds: drops, cfgs };
   });
 
-  const executeOrbDrop = (type) => {
-    const roll = rngDrop() * 100;
+  const executeOrbDrop = (type, cfg = null) => {
+    const roll = rngDrop() * 100;  // 🌟 内容指定時も必ず1回引く（乱数消費を一定に保つ）
     const rowStyle = { display: 'flex', alignItems: 'center', gap: 10, color: 'white', fontFamily: 'Noto Sans JP', fontWeight: 900, fontSize: '20px' };
     const iconStyle = (cost) => ({ width: 50, height: 50, border: `1px solid ${COST_COLORS[cost]}`, borderRadius: 3, background: '#1e293b' });
 
-    // 🌟 複数体ドロップ用の汎用ヘルパー
-    const rollMultiple = (cost, count) => {
+    // 🌟 複数体ドロップ用の汎用ヘルパー（champIds で個別指定可、自然抽選は常に消費）
+    const rollMultiple = (cost, count, champIds = null) => {
       const pool = CHAMPS.filter(c => c.cost === cost);
       const droppedUnits = [];
       for (let i = 0; i < count; i++) {
-        const c = pool[Math.floor(rngDrop() * pool.length)];
+        const natural = pool[Math.floor(rngDrop() * pool.length)];   // 指定時も必ず引く
+        const forced = (champIds && champIds[i]) ? pool.find(c => c.id === champIds[i]) : null;
+        const c = forced || natural;
         const unit = { ...c, star: 1, uid: rngMisc(), items: [] };
         addChampToBenchDirect(unit);
         droppedUnits.push(unit);
@@ -2740,14 +2905,25 @@ useEffect(() => {
       );
     };
 
+    // 🌟 自然抽選の結果IDを算出 → 内容指定があれば上書き
+    let outcome;
     if (type === 'GRAY') {
-      if (roll < 48) return rollMultiple(1, 2); // 🌟 1コス×2体（個別抽選）
-      if (roll < 95) return rollMultiple(2, 1); // 🌟 2コス×1体
-      if (roll < 98) {
+      outcome = roll < 48 ? 'g_1c2' : roll < 95 ? 'g_2c1' : roll < 98 ? 'g_reforge' : roll < 99 ? 'g_remover' : 'g_dupe';
+    } else {
+      outcome = roll < 33 ? 'b_3c2' : roll < 64 ? 'b_3c1g' : roll < 95 ? 'b_2c3' : roll < 97 ? 'b_dupe_2c2' : roll < 99 ? 'b_reforge' : 'b_cdupe_3c1';
+    }
+    if (cfg && cfg.outcome) outcome = cfg.outcome;
+    const champIds = (cfg && Array.isArray(cfg.champs)) ? cfg.champs : null;
+
+    switch (outcome) {
+      // ── 灰色オーブ ──
+      case 'g_1c2': return rollMultiple(1, 2, champIds);
+      case 'g_2c1': return rollMultiple(2, 1, champIds);
+      case 'g_reforge': {
         setInventory(p => [...p, CONSUMABLES.REFORGER]); setGold(g => g + 2);
         return <div style={rowStyle}><img src={getMetaTFTItemUrl('Reforger')} style={iconStyle(1)} /><span>再合成 + 2G</span></div>;
       }
-      if (roll < 99) {
+      case 'g_remover': {
         setInventory(p => {
           const nb = [...p];
           const ex = nb.findIndex(i => i.id === 'remover');
@@ -2758,36 +2934,43 @@ useEffect(() => {
         setGold(g => g + 2);
         return <div style={rowStyle}><img src={getMetaTFTItemUrl('itemremover')} style={iconStyle(1)} /><span>除去装置 + 2G</span></div>;
       }
-      setInventory(p => [...p, CONSUMABLES.LESSER_DUPE]);
-      return <div style={rowStyle}><img src={getMetaTFTItemUrl('Lesser Champion Duplicator')} style={iconStyle(1)} /><span>小型複製機</span></div>;
-
-    } else if (type === 'BLUE') {
-      if (roll < 33) return rollMultiple(3, 2); // 🌟 3コス×2体（個別抽選）
-      if (roll < 64) {
-        const res = rollMultiple(3, 1);
+      case 'g_dupe': {
+        setInventory(p => [...p, CONSUMABLES.LESSER_DUPE]);
+        return <div style={rowStyle}><img src={getMetaTFTItemUrl('Lesser Champion Duplicator')} style={iconStyle(1)} /><span>小型複製機</span></div>;
+      }
+      // ── 青オーブ ──
+      case 'b_3c2': return rollMultiple(3, 2, champIds);
+      case 'b_3c1g': {
+        const res = rollMultiple(3, 1, champIds);
         setGold(g => g + 3);
         return <div style={rowStyle}>{res}<span> + 3G</span></div>;
       }
-      if (roll < 95) return rollMultiple(2, 3); // 🌟 2コス×3体（個別抽選）
-      if (roll < 97) {
-        const res = rollMultiple(2, 2);
+      case 'b_2c3': return rollMultiple(2, 3, champIds);
+      case 'b_dupe_2c2': {
+        const res = rollMultiple(2, 2, champIds);
         setInventory(p => [...p, CONSUMABLES.LESSER_DUPE]);
         return <div style={rowStyle}><img src={getMetaTFTItemUrl('Lesser Champion Duplicator')} style={iconStyle(1)} /><span>＋</span>{res}</div>;
       }
-      if (roll < 99) {
+      case 'b_reforge': {
         setInventory(p => [...p, CONSUMABLES.REFORGER]); setGold(g => g + 6);
         return <div style={rowStyle}><img src={getMetaTFTItemUrl('Reforger')} style={iconStyle(1)} /><span>再合成 + 6G</span></div>;
       }
-      const pool = CHAMPS.filter(c => c.cost === 3);
-      const c = pool[Math.floor(rngDrop() * pool.length)];
-      setInventory(p => [...p, CONSUMABLES.CHAMP_DUPE]);
-      addChampToBenchDirect({ ...c, star: 1, uid: rngMisc(), items: [] });
-      return <div style={rowStyle}><img src={getMetaTFTItemUrl('Champion Duplicator')} style={iconStyle(1)} /><span>＋</span><img src={boardIcon(c.img)} style={iconStyle(3)} /><span>{c.jaName}</span></div>;
+      case 'b_cdupe_3c1':
+      default: {
+        const pool = CHAMPS.filter(c => c.cost === 3);
+        const natural = pool[Math.floor(rngDrop() * pool.length)];
+        const forced = (champIds && champIds[0]) ? pool.find(c => c.id === champIds[0]) : null;
+        const c = forced || natural;
+        setInventory(p => [...p, CONSUMABLES.CHAMP_DUPE]);
+        addChampToBenchDirect({ ...c, star: 1, uid: rngMisc(), items: [] });
+        return <div style={rowStyle}><img src={getMetaTFTItemUrl('Champion Duplicator')} style={iconStyle(1)} /><span>＋</span><img src={boardIcon(c.img)} style={iconStyle(3)} /><span>{c.jaName}</span></div>;
+      }
     }
   };
 
   const triggerDrops = (currentRound) => {
-    const drops = dropPlan[currentRound];
+    const drops = dropPlan.rounds[currentRound];
+    const cfgList = (dropPlan.cfgs && dropPlan.cfgs[currentRound]) || [];
     if (!drops || drops.length === 0) return;
 
     let newItems = [];
@@ -2795,6 +2978,7 @@ useEffect(() => {
     let newlyDroppedIds = [];
 
     drops.forEach((dropType, i) => {
+      const cfg = cfgList[i] || null;
       if (dropType === 'comp') {
         const comps = ITEMS.filter(it => it.type === 'comp' && it.id !== 'spatula' && it.id !== 'pan');
         let availableComps = comps.filter(c => !droppedComps.includes(c.id) && !newlyDroppedIds.includes(c.id));
@@ -2803,7 +2987,12 @@ useEffect(() => {
           availableComps = comps;
         }
 
-        const item = availableComps[Math.floor(rngDrop() * availableComps.length)];
+        let item = availableComps[Math.floor(rngDrop() * availableComps.length)];  // 指定時も必ず引く
+        // 🌟 ドロップ設定：素材の内容指定
+        if (cfg && cfg.compId) {
+          const forced = comps.find(c => c.id === cfg.compId);
+          if (forced) item = forced;
+        }
         
         newItems.push(item);
         newlyDroppedIds.push(item.id);
@@ -2815,7 +3004,7 @@ useEffect(() => {
           </div>
         );
       } else {
-        const orbResult = executeOrbDrop(dropType);
+        const orbResult = executeOrbDrop(dropType, cfg);
         dropElements.push(<div key={`orb-${i}`}>{orbResult}</div>);
       }
     });
