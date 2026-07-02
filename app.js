@@ -242,6 +242,93 @@ function rollShop(level, rng){
   });
 }
 
+/* ── 🎬 振り返り: 前後スナップショットの差分からアクション名を生成 ── */
+function describeReplayDiff(prev, cur) {
+  if (!prev) return '🏁 ゲーム開始';
+
+  // ユニットを uid → unit のマップに（盤面＋ベンチ）
+  const unitMap = (s) => {
+    const m = new Map();
+    [...s.board, ...s.bench].forEach(u => { if (u && !u.isAnvil && u.uid != null) m.set(u.uid, u); });
+    return m;
+  };
+  const pm = unitMap(prev), cm = unitMap(cur);
+  const added = [], removed = [];
+  cm.forEach((u, uid) => { if (!pm.has(uid)) added.push(u); });
+  pm.forEach((u, uid) => { if (!cm.has(uid)) removed.push(u); });
+
+  const goldDiff = cur.gold - prev.gold;
+  const labels = [];
+
+  // ラウンド進行（最優先で単独表示）
+  if (cur.round !== prev.round) return `📅 ラウンド ${cur.round} 開始`;
+  if (cur.phase !== prev.phase) return cur.phase === 'drop' ? '📦 アイテムドロップ' : '▶ フェーズ再開';
+
+  // オーグメント選択
+  if (cur.augments.length > prev.augments.length) {
+    const a = cur.augments[cur.augments.length - 1];
+    return `${a.icon || '✨'} オーグメント選択: ${a.name}`;
+  }
+
+  // ★昇格（同idで星が上がったユニットが追加され、複数消えた）
+  const merged = added.find(u => removed.some(r => r.id === u.id && r.star < u.star));
+  if (merged) labels.push(`⭐ ${merged.jaName}が★${merged.star}に昇格`);
+
+  // 購入（ゴールド減 ＋ ユニット追加）
+  const bought = added.filter(u => !merged || u.uid !== merged.uid);
+  if (goldDiff < 0 && bought.length > 0 && !merged) {
+    labels.push(`🛒 ${bought.map(u => u.jaName).join('・')}を購入`);
+  } else if (bought.length > 0 && !merged && goldDiff >= 0) {
+    labels.push(`🎁 ${bought.map(u => u.jaName).join('・')}を獲得`);
+  }
+
+  // 売却（ユニット減 ＋ ゴールド増）
+  const sold = removed.filter(u => !merged || u.id !== merged.id);
+  if (sold.length > 0 && goldDiff > 0 && !merged) {
+    labels.push(`💰 ${sold.map(u => u.jaName).join('・')}を売却`);
+  }
+
+  // アイテム装備（同一ユニットの items 数が増えた）
+  let equipped = null;
+  cm.forEach((u, uid) => {
+    const p = pm.get(uid);
+    if (p && (u.items || []).length > (p.items || []).length) {
+      const newIt = (u.items || [])[(u.items || []).length - 1];
+      equipped = `🔧 ${u.jaName}に${newIt?.jaName || newIt?.name || 'アイテム'}を装備`;
+    }
+  });
+  if (equipped) labels.push(equipped);
+
+  // アイテム獲得/消費
+  if (cur.inventory.length > prev.inventory.length) labels.push('📦 アイテム獲得');
+  else if (cur.inventory.length < prev.inventory.length && !equipped) labels.push('🧰 アイテム使用');
+
+  // 経験値購入 / レベルアップ
+  if (cur.level > prev.level) labels.push(`📈 レベル${cur.level}に到達`);
+  else if (cur.xp > prev.xp && goldDiff < 0 && added.length === 0) labels.push('📖 経験値購入');
+
+  // リロール（ショップ内容が変化 ＋ 購入以外 ＋ G-2または無料リロール消費）
+  const shopChanged = JSON.stringify(cur.shop.map(s => s && s.uid)) !== JSON.stringify(prev.shop.map(s => s && s.uid));
+  if (shopChanged && added.length === 0 && (goldDiff === -2 || cur.freeRerolls < prev.freeRerolls)) {
+    labels.push(cur.freeRerolls < prev.freeRerolls ? '🎲 リロール（無料）' : '🎲 リロール');
+  }
+
+  // 配置変更（構成同じで位置だけ違う）
+  if (labels.length === 0 && added.length === 0 && removed.length === 0) {
+    const posChanged = cur.board.some((u, i) => (u && u.uid) !== (prev.board[i] && prev.board[i].uid))
+      || cur.bench.some((u, i) => (u && u.uid) !== (prev.bench[i] && prev.bench[i].uid));
+    if (posChanged) labels.push('↔️ 配置変更');
+  }
+
+  // ゴールドのみ変化（利子・オーグメント効果など）
+  if (labels.length === 0 && goldDiff !== 0) {
+    labels.push(goldDiff > 0 ? `🪙 ${goldDiff}G獲得` : `🪙 ${-goldDiff}G消費`);
+  }
+
+  if (labels.length === 0) return null; // 表示すべき変化なし → コマとして記録しない
+  return labels.join(' ／ ');
+}
+
 /* ── UIコンポーネント ── */
 const Stars = ({star}) => (
   <div style={{display:'flex', gap:2, justifyContent:'center', alignItems:'center'}}>
@@ -287,6 +374,153 @@ const HexCell = ({ champ, size = 78, onDragStart, onDrop, onMouseEnter, onMouseL
     </div>
   );
 };
+
+/* ── 🎬 振り返り（感想戦）ビューア ── */
+function ReplayViewer({ history, seed, onClose }) {
+  const [idx, setIdx] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const [speed, setSpeed] = useState(1);
+  const total = history.length;
+  const frame = history[Math.min(idx, total - 1)] || null;
+
+  // 自動再生
+  useEffect(() => {
+    if (!playing) return;
+    const iv = setInterval(() => {
+      setIdx(i => {
+        if (i >= total - 1) { setPlaying(false); return i; }
+        return i + 1;
+      });
+    }, 900 / speed);
+    return () => clearInterval(iv);
+  }, [playing, speed, total]);
+
+  // キーボード操作（←/→/Space/Esc）
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'ArrowRight') { e.preventDefault(); setPlaying(false); setIdx(i => Math.min(total - 1, i + 1)); }
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); setPlaying(false); setIdx(i => Math.max(0, i - 1)); }
+      else if (e.key === ' ') { e.preventDefault(); setPlaying(p => !p); }
+      else if (e.key === 'Escape') { onClose(); }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [total, onClose]);
+
+  if (!frame) return null;
+
+  const cellStyle = (champ) => ({
+    width: 34, height: 34, borderRadius: 6, background: 'rgba(13,21,37,0.5)', flexShrink: 0,
+    border: `1px solid ${champ ? (champ.isAnvil ? (champ.color || 'var(--border)') : COST_COLORS[champ.cost]) : 'rgba(30,45,74,.4)'}`,
+    display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', overflow: 'hidden'
+  });
+  const renderMini = (champ, i) => (
+    <div key={i} style={cellStyle(champ)}>
+      {champ && (champ.isAnvil
+        ? <img src={champ.img} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+        : <React.Fragment>
+            <img src={boardIcon(champ.img)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            <div style={{ position: 'absolute', top: 1, left: 1, display: 'flex', flexDirection: 'column', gap: 1 }}>
+              {(champ.items || []).map((it, k) => (<img key={k} src={getMetaTFTItemUrl(it)} style={{ width: 7, height: 7, border: '1px solid white', borderRadius: 1 }} />))}
+            </div>
+            <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, display: 'flex', justifyContent: 'center', transform: 'scale(0.55)', transformOrigin: 'bottom' }}><Stars star={champ.star} /></div>
+          </React.Fragment>)}
+    </div>
+  );
+  const btn = (label, onClick, disabled = false, primary = false) => (
+    <button onClick={onClick} disabled={disabled}
+      style={{ padding: '9px 14px', borderRadius: 8, fontSize: 14, fontWeight: 900, fontFamily: 'Noto Sans JP',
+        cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.35 : 1, transition: 'all 0.12s',
+        color: primary ? '#08101a' : '#fff', background: primary ? 'var(--gold2)' : 'rgba(255,255,255,0.08)',
+        border: `1px solid ${primary ? 'var(--gold2)' : 'var(--border)'}` }}>{label}</button>
+  );
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 9500, background: 'rgba(4,8,16,0.94)', backdropFilter: 'blur(6px)',
+      display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '14px 12px', overflowY: 'auto', animation: 'fadeIn 0.25s ease' }}>
+
+      {/* ヘッダー */}
+      <div style={{ width: 'min(860px, 96vw)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, gap: 10, flexWrap: 'wrap' }}>
+        <div style={{ fontFamily: 'Orbitron', fontSize: 16, fontWeight: 900, color: '#fff', letterSpacing: 3 }}>🎬 振り返り <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', letterSpacing: 1 }}>SEED: {seed}</span></div>
+        <button onClick={onClose} style={{ padding: '8px 16px', borderRadius: 8, background: 'rgba(220,53,69,0.7)', border: '1px solid var(--red)', color: '#fff', fontWeight: 900, fontSize: 13, cursor: 'pointer' }}>✕ 閉じる (Esc)</button>
+      </div>
+
+      {/* アクションラベル＋ステータス */}
+      <div style={{ width: 'min(860px, 96vw)', background: 'rgba(8,16,26,0.9)', border: '1px solid var(--border)', borderRadius: 14, padding: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+          <div style={{ fontSize: 15, fontWeight: 900, color: 'var(--gold2)', minHeight: 22 }}>{frame.label}</div>
+          <div style={{ fontFamily: 'Orbitron', fontSize: 12, color: 'rgba(255,255,255,0.6)' }}>{idx + 1} / {total}</div>
+        </div>
+        <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 12.5, fontWeight: 700, color: '#fff' }}>
+          <span>📅 {frame.round}</span>
+          <span style={{ color: 'var(--gold2)' }}>🪙 {frame.gold}G</span>
+          <span>Lv.{frame.level} <span style={{ color: 'rgba(255,255,255,0.5)' }}>(XP {frame.xp})</span></span>
+          {frame.freeRerolls > 0 && <span style={{ color: '#7fd0ff' }}>🎟️ 無料リロール×{frame.freeRerolls}</span>}
+          {frame.augments.length > 0 && (
+            <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              {frame.augments.map((a, i) => (<span key={i} style={{ color: TIER_COLORS[a.tier], fontSize: 11.5 }}>{a.icon || '✨'}{a.name}</span>))}
+            </span>
+          )}
+        </div>
+
+        {/* 盤面 */}
+        <div style={{ display: 'flex', justifyContent: 'center' }}>
+          <div>
+            {[0, 1, 2, 3].map(row => (
+              <div key={row} style={{ display: 'flex', gap: 2, marginLeft: row % 2 === 1 ? 24 : 0 }}>
+                {[0, 1, 2, 3, 4, 5, 6].map(col => <HexCell key={row * 7 + col} champ={frame.board[row * 7 + col]} size={48} />)}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* ベンチ＋ショップ＋アイテム */}
+        <div style={{ display: 'flex', gap: 16, justifyContent: 'center', flexWrap: 'wrap' }}>
+          <div style={{ background: 'rgba(0,0,0,0.35)', padding: '6px 10px', borderRadius: 10, border: '1px solid rgba(30,45,74,0.5)' }}>
+            <div style={{ fontSize: 9, color: 'var(--textdim)', fontFamily: 'Orbitron', letterSpacing: 1, textAlign: 'center', marginBottom: 4 }}>BENCH</div>
+            <div style={{ display: 'flex', gap: 4 }}>{frame.bench.map(renderMini)}</div>
+          </div>
+          <div style={{ background: 'rgba(0,0,0,0.35)', padding: '6px 10px', borderRadius: 10, border: '1px solid rgba(30,45,74,0.5)' }}>
+            <div style={{ fontSize: 9, color: 'var(--blue)', fontFamily: 'Orbitron', letterSpacing: 1, textAlign: 'center', marginBottom: 4 }}>SHOP</div>
+            <div style={{ display: 'flex', gap: 4 }}>{frame.shop.map(renderMini)}</div>
+          </div>
+          <div style={{ background: 'rgba(0,0,0,0.35)', padding: '6px 10px', borderRadius: 10, border: '1px solid rgba(30,45,74,0.5)', maxWidth: 200 }}>
+            <div style={{ fontSize: 9, color: 'var(--gold)', fontFamily: 'Orbitron', letterSpacing: 1, textAlign: 'center', marginBottom: 4 }}>ITEMS</div>
+            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+              {frame.inventory.length > 0 ? frame.inventory.map((it, i) => (
+                <div key={i} style={{ width: 24, height: 24, background: '#1e293b', borderRadius: 4, border: '1px solid var(--border)', overflow: 'hidden', flexShrink: 0 }}>
+                  {it?.name ? <img src={getMetaTFTItemUrl(it)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <span style={{ fontSize: 11 }}>{it?.icon}</span>}
+                </div>
+              )) : <span style={{ fontSize: 10, color: 'var(--textdim)' }}>なし</span>}
+            </div>
+          </div>
+        </div>
+
+        {/* コントロール */}
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'center', alignItems: 'center', flexWrap: 'wrap' }}>
+          {btn('|◀', () => { setPlaying(false); setIdx(0); }, idx === 0)}
+          {btn('◀ 前', () => { setPlaying(false); setIdx(i => Math.max(0, i - 1)); }, idx === 0)}
+          {btn(playing ? '⏸ 停止' : '▶ 再生', () => setPlaying(p => !p), idx >= total - 1 && !playing, true)}
+          {btn('次 ▶', () => { setPlaying(false); setIdx(i => Math.min(total - 1, i + 1)); }, idx >= total - 1)}
+          {btn('▶|', () => { setPlaying(false); setIdx(total - 1); }, idx >= total - 1)}
+          <select value={speed} onChange={e => setSpeed(Number(e.target.value))}
+            style={{ padding: '8px 10px', borderRadius: 8, background: 'rgba(15,23,42,0.9)', color: '#fff', border: '1px solid var(--border)', fontSize: 12.5, fontFamily: 'Noto Sans JP', cursor: 'pointer' }}>
+            <option value={0.5}>0.5倍速</option>
+            <option value={1}>1倍速</option>
+            <option value={2}>2倍速</option>
+            <option value={4}>4倍速</option>
+          </select>
+        </div>
+
+        {/* シークバー */}
+        <input type="range" min={0} max={Math.max(0, total - 1)} value={idx}
+          onChange={e => { setPlaying(false); setIdx(Number(e.target.value)); }}
+          style={{ width: '100%', accentColor: 'var(--gold2)', cursor: 'pointer' }} />
+        <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.4)', textAlign: 'center' }}>← / → キーでコマ送り、スペースで再生/停止</div>
+      </div>
+    </div>
+  );
+}
 
 const ChampionTooltip = ({ data }) => {
   if (!data) return null;
@@ -1680,6 +1914,31 @@ function App({ seed, onRestart, onNewGame, keyBindings = DEFAULT_KEYBINDINGS, ga
   const [introStep, setIntroStep] = useState(0);
   const [auraTrainingUnit, setAuraTrainingUnit] = useState(null); // 🌟 オーラ育成中 専用の待機枠
   const [phase, setPhase] = useState('main'); // 🌟 追加: 'main' | 'drop'
+
+  // 🎬 ============ 振り返り（感想戦）用の履歴記録 ============
+  //    状態変化を監視して1操作＝1コマのスナップショットを自動記録する。
+  //    React 18 のバッチングにより、1つの操作内の複数 setState は1回の再レンダー
+  //    ＝1回の effect 実行にまとまるため、個別のアクションをフックする必要がない。
+  const historyRef = useRef([]);
+  const [showReplay, setShowReplay] = useState(false);
+
+  useEffect(() => {
+    // 終了後は状態変化が起きないため自然に記録が止まる（最終コマまで記録される）
+    const cloneUnit = (u) => u ? { ...u, items: (u.items || []).map(it => it) } : null;
+    const snap = {
+      round, phase, gold, level, xp, freeRerolls,
+      board: board.map(cloneUnit),
+      bench: bench.map(cloneUnit),
+      shop: shop.map(s => s ? { ...s } : null),
+      inventory: inventory.map(it => it),
+      augments: augments.map(a => ({ name: a.name, tier: a.tier, imgName: a.imgName, icon: a.icon })),
+      t: Date.now(),
+    };
+    const prev = historyRef.current[historyRef.current.length - 1] || null;
+    snap.label = describeReplayDiff(prev, snap);
+    if (snap.label === null) return; // 意味のある変化なし（ツールチップ等）
+    historyRef.current.push(snap);
+  }, [board, bench, gold, level, xp, round, phase, shop, inventory, augments, freeRerolls]);
 
   // 🌟 ============ キーボードショートカット ============
   const hoveredUnitRef = useRef(null);   // カーソル下の駒 { type:'bench'|'board', idx }
@@ -3254,8 +3513,14 @@ const handleAugmentPick = (aug, historyContext) => {
           </div>
         )}
         
+        {/* 🎬 振り返り（感想戦）ビューア */}
+        {showReplay && (
+          <ReplayViewer history={historyRef.current} seed={seed} onClose={() => setShowReplay(false)} />
+        )}
+
         {/* 🌟 1. ボタン類を上部に集約！シード値コピーもここへ移動 */}
         <div style={{display:'flex', gap:12, marginBottom:5}}>
+          <button className="menu-btn" onClick={() => setShowReplay(true)} style={{padding:'10px 20px',fontSize:13, background:'var(--gold2)', color:'#08101a', borderColor:'var(--gold2)', fontWeight:900}}>🎬 振り返り</button>
           <button className="menu-btn" onClick={onRestart} style={{padding:'10px 20px',fontSize:13, background:'var(--blue)', color:'white', borderColor:'var(--blue)'}}>同じシードで再挑戦</button>
           <button className="menu-btn" onClick={onNewGame} style={{padding:'10px 20px',fontSize:13, background:'var(--teal)', color:'white', borderColor:'var(--teal)'}}>新しいゲーム</button>
           <button className="menu-btn" onClick={() => setShowSettings(true)} style={{padding:'10px 20px',fontSize:13, background:'rgba(15,23,42,0.85)', color:'white', borderColor:'var(--border)'}}>⚙️ 設定</button>
