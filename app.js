@@ -832,8 +832,9 @@ const TierListDrawer = ({ isOpen, onClose, showMsg }) => {
 const AugmentScreen = ({ onPick, rng, augmentTierBoost = 0, isNoMoreAugments = false, forceTier = null, rerollBonus = 0, augmentPicks = null }) => {
   const maxRerolls = 1 + (rerollBonus || 0); // 各枠のリロール可能回数（タロンで+1）
   const [tier] = useState(() => {
-    if (forceTier) return forceTier;          // 遭遇によるティア強制（TF=gold / シェン・モルガナ=prismatic）
+    // 🌟 ティア固定時も必ず1回引く（引かないと rngAug の位置がズレて抽選結果が変わる）
     const baseTierRoll = rng() * 100;
+    if (forceTier) return forceTier;          // 遭遇によるティア強制（TF=gold / シェン・モルガナ=prismatic）
     const adjusted = baseTierRoll - (augmentTierBoost * 30);
     if (adjusted < 9) return 'prismatic';
     if (adjusted < 74) return 'gold';
@@ -844,7 +845,11 @@ const AugmentScreen = ({ onPick, rng, augmentTierBoost = 0, isNoMoreAugments = f
 
   const [augmentSetup] = useState(() => {
     const pool = [...AUGMENTS_DATA[tier]];
-    const need = 3 + 3 * maxRerolls;          // 初期3 + (枠ごとmaxRerolls個)の控え
+    // 🌟 抽選枚数を常に一定にする（リロール+1の遭遇の有無で rngAug の消費回数が
+    //    変わらないように、常に最大リロール数ぶんの控えを引いておく）
+    const RESERVE_REROLLS = 2;                // 現状の最大（基本1 + タロン+1）
+    const drawRerolls = Math.max(maxRerolls, RESERVE_REROLLS);
+    const need = 3 + 3 * drawRerolls;         // 初期3 + (枠ごとdrawRerolls個)の控え
     const drawn = [];
     while (drawn.length < need && pool.length > 0) {
       const idx = Math.floor(rng() * pool.length);
@@ -853,7 +858,7 @@ const AugmentScreen = ({ onPick, rng, augmentTierBoost = 0, isNoMoreAugments = f
     const initial = drawn.slice(0, 3);
     const backups = [[], [], []];             // 枠ごとの控え（複数回リロール対応）
     let k = 3;
-    for (let r = 0; r < maxRerolls; r++) {
+    for (let r = 0; r < maxRerolls; r++) {    // 実際に使うのは maxRerolls ぶんだけ
       for (let s = 0; s < 3; s++) { if (drawn[k]) backups[s].push(drawn[k]); k++; }
     }
 
@@ -1577,40 +1582,46 @@ function App({ seed, onRestart, onNewGame, keyBindings = DEFAULT_KEYBINDINGS, ga
   const rngEnc  = useMemo(() => createRNG(seed + "_enc"),  [seed]);
 
   const currentStargazerDesc = useMemo(() => {
+    // 🌟 固定時も必ず1回引く（引かないと rngSys の位置がズレて神/サイオニックが変わる）
+    const rolled = stargazerVariants[Math.floor(rngSys() * stargazerVariants.length)];
     const i = gameOverrides && gameOverrides.stargazer;
     if (i != null && stargazerVariants[i]) return stargazerVariants[i];   // 🌟 手動指定
-    return stargazerVariants[Math.floor(rngSys() * stargazerVariants.length)];
+    return rolled;
   }, [rngSys, gameOverrides]);
 
   // 1. 神の抽選
   const encounterGods = useMemo(() => {
+    // 🌟 固定の有無に関わらず毎回同じ回数シャッフルし、結果だけ上書きする
+    const shuffled = shuffleArray(GOD_DATA, rngSys);
     const ov = gameOverrides && gameOverrides.gods;                       // 🌟 手動指定（1体目が発動）
     if (ov && ov.length) {
       const chosen = ov.map(id => GOD_DATA.find(g => g.id === id)).filter(Boolean);
       if (chosen.length >= 2) return [chosen[0], chosen[1]];
       if (chosen.length === 1) {
-        const others = shuffleArray(GOD_DATA.filter(g => g.id !== chosen[0].id), rngSys);
-        return [chosen[0], others[0]];
+        // 2体目は「通常抽選の並び」から1体目と被らない先頭を採用（追加の乱数は引かない）
+        const second = shuffled.find(g => g.id !== chosen[0].id);
+        return [chosen[0], second];
       }
     }
-    const shuffled = shuffleArray(GOD_DATA, rngSys);
     return [shuffled[0], shuffled[1]];
   }, [rngSys, gameOverrides]);
 
   // 2. サイオニックアイテムの抽選
   const currentPsionicItems = useMemo(() => {
+    // 🌟 固定の有無に関わらず毎回同じ回数シャッフルし、結果だけ上書きする
+    const shuffled = shuffleArray(PSIONIC_ITEMS, rngSys);
     const ov = gameOverrides && gameOverrides.psionic;                    // 🌟 [初手, 2手目]（null可）
     if (ov && (ov[0] || ov[1])) {
       let first  = ov[0] ? PSIONIC_ITEMS.find(p => p.name === ov[0]) : null;
       let second = ov[1] ? PSIONIC_ITEMS.find(p => p.name === ov[1]) : null;
       const used = new Set([first && first.name, second && second.name].filter(Boolean));
-      const pool = shuffleArray(PSIONIC_ITEMS.filter(p => !used.has(p.name)), rngSys);
+      // 未指定スロットは「通常抽選の並び」から順に埋める（追加の乱数は引かない）
+      const pool = shuffled.filter(p => !used.has(p.name));
       let pi = 0;
       if (!first)  first  = pool[pi++];
       if (!second) second = pool[pi++];
       return [first, second];
     }
-    const shuffled = shuffleArray(PSIONIC_ITEMS, rngSys);
     return [shuffled[0], shuffled[1]];
   }, [rngSys, gameOverrides]);
 
@@ -1619,12 +1630,14 @@ function App({ seed, onRestart, onNewGame, keyBindings = DEFAULT_KEYBINDINGS, ga
   const encounter = useMemo(() => {
     const list = (typeof ENCOUNTERS !== 'undefined' && Array.isArray(ENCOUNTERS)) ? ENCOUNTERS : [];
     if (list.length === 0) return null;
-    const ovId = gameOverrides && gameOverrides.encounter;               // 🌟 手動指定
-    if (ovId) { const f = list.find(e => e.id === ovId); if (f) return f; }
+    // 🌟 固定時も必ず加重抽選を1回引く（rngEnc の消費回数を一定に保つ）
     const total = list.reduce((sum, e) => sum + (e.prob || 0), 0);
     let r = rngEnc() * total;
-    for (const e of list) { r -= (e.prob || 0); if (r <= 0) return e; }
-    return list[list.length - 1];
+    let rolled = list[list.length - 1];
+    for (const e of list) { r -= (e.prob || 0); if (r <= 0) { rolled = e; break; } }
+    const ovId = gameOverrides && gameOverrides.encounter;               // 🌟 手動指定
+    if (ovId) { const f = list.find(e => e.id === ovId); if (f) return f; }
+    return rolled;
   }, [rngEnc, gameOverrides]);
   const encounterAppliedRef = useRef(false);    // 1-1→1-2 の開始効果ガード
   const encounter21AppliedRef = useRef(false);  // 2-1 到達時の効果ガード
@@ -1694,7 +1707,7 @@ function App({ seed, onRestart, onNewGame, keyBindings = DEFAULT_KEYBINDINGS, ga
     if (freeRerolls > 0) { setFreeRerolls(fr => fr - 1); setShop(rollShop(level, rngShop)); return; }
     if (gold >= 2) {
       setGold(g => g - 2); setShop(rollShop(level, rngShop));
-      if (passiveBuffs.some(b => b.type === 'prism_ticket') && rngShop() < 0.5) setFreeRerolls(fr => fr + 1);
+      if (passiveBuffs.some(b => b.type === 'prism_ticket') && rngShop() < 0.45) setFreeRerolls(fr => fr + 1);
       if (passiveBuffs.some(b => b.type === 'wise_spending')) {
         const { level: nl, xp: nx } = applyXp(2, level, xp);
         setLevel(nl); setXp(nx);
@@ -2304,6 +2317,7 @@ useEffect(() => {
 
   // 🌟 レベルアップ時に発動するオーグメントを管理する（関数定義より後ろに移動）
   const prevLevelRef = useRef(level);
+  const birthdayReunionDoneRef = useRef(false); // 🎉 バースデーリユニオンLv5報酬の発動済みフラグ
   useEffect(() => {
     if (prevLevelRef.current < level) {
       // Level up occurred!
@@ -2320,7 +2334,19 @@ useEffect(() => {
       }
       const hasUM = passiveBuffs.some(b => b.type === 'upward_mobility');
       if (hasUM) {
-        setFreeRerolls(fr => fr + 2);
+        setFreeRerolls(fr => fr + 1);
+      }
+      // 🎉 バースデー リユニオン: レベル5到達で★2のコスト2を1体（1回のみ）
+      //    ※ レベル7/9の効果は本シムの範囲(1-1〜2-1)外のため未実装
+      const brBuff = passiveBuffs.find(b => b.type === 'birthday_reunion');
+      if (brBuff && level >= 5 && !birthdayReunionDoneRef.current) {
+        birthdayReunionDoneRef.current = true;
+        const pool = CHAMPS.filter(c => c.cost === 2);
+        if (pool.length) {
+          const champ = { ...pool[Math.floor(rngMisc() * pool.length)], star: 2, uid: rngMisc(), items: [] };
+          addChampToBenchDirect(champ);
+          showMsg(`🎉 バースデー リユニオン: レベル5到達！★★${champ.jaName}を獲得！`);
+        }
       }
       const protectorsPactBuff = passiveBuffs.find(b => b.type === 'protectors_pact');
       if (protectorsPactBuff) {
@@ -2361,24 +2387,25 @@ useEffect(() => {
   }, [mergeToast]);
 
   const [dropPlan] = useState(() => {
+    // 🌟 固定時も必ず1回引く（引かないと rngDrop の位置がズレてオーブ中身が変わる）
+    const roll = rngDrop() * 100;
     let plan;
-    const ovIdx = gameOverrides && gameOverrides.dropPlanIndex;          // 🌟 手動指定
+    // BASE (95%)
+    if (roll < 33.25) plan = { comp: 3, gray: 3, blue: 0 };
+    else if (roll < 66.50) plan = { comp: 3, gray: 0, blue: 1 };
+    else if (roll < 77.90) plan = { comp: 2, gray: 1, blue: 1 };
+    else if (roll < 89.30) plan = { comp: 2, gray: 2, blue: 1 };
+    else if (roll < 95.00) plan = { comp: 1, gray: 1, blue: 2 };
+    // HIGH (5%)
+    else if (roll < 96.15) plan = { comp: 5, gray: 3, blue: 0 };
+    else if (roll < 97.30) plan = { comp: 5, gray: 0, blue: 1 };
+    else if (roll < 98.20) plan = { comp: 4, gray: 0, blue: 1 };
+    else if (roll < 99.10) plan = { comp: 3, gray: 0, blue: 2 };
+    else plan = { comp: 3, gray: 5, blue: 0 };
+
+    const ovIdx = gameOverrides && gameOverrides.dropPlanIndex;          // 🌟 手動指定（結果だけ上書き）
     if (ovIdx != null && DROP_PLANS[ovIdx]) {
       plan = { ...DROP_PLANS[ovIdx].plan };
-    } else {
-      const roll = rngDrop() * 100;
-      // BASE (95%)
-      if (roll < 33.25) plan = { comp: 3, gray: 3, blue: 0 };
-      else if (roll < 66.50) plan = { comp: 3, gray: 0, blue: 1 };
-      else if (roll < 77.90) plan = { comp: 2, gray: 1, blue: 1 };
-      else if (roll < 89.30) plan = { comp: 2, gray: 2, blue: 1 };
-      else if (roll < 95.00) plan = { comp: 1, gray: 1, blue: 2 };
-      // HIGH (5%)
-      else if (roll < 96.15) plan = { comp: 5, gray: 3, blue: 0 };
-      else if (roll < 97.30) plan = { comp: 5, gray: 0, blue: 1 };
-      else if (roll < 98.20) plan = { comp: 4, gray: 0, blue: 1 };
-      else if (roll < 99.10) plan = { comp: 3, gray: 0, blue: 2 };
-      else plan = { comp: 3, gray: 5, blue: 0 };
     }
 
     const allDrops = [];
@@ -2669,8 +2696,8 @@ useEffect(() => {
       const newLeft = afkRoundsLeft - 1;
       setAfkRoundsLeft(newLeft);
       if (newLeft === 0) {
-        setGold(g => g + 20);
-        setDropMsg('💤 AFK解除！20G獲得！');
+        setGold(g => g + 17);
+        setDropMsg('💤 AFK解除！17G獲得！');
         setTimeout(() => setDropMsg(null), 2500);
       }
     }
@@ -2705,7 +2732,7 @@ useEffect(() => {
       const interest = Math.min(maxInterest, Math.floor(g / 10));
       const baseIncome = {  '1-4': 2, '2-1': 3 }[nextR] || 5;
       const hasSA = passiveBuffs.some(b => b.type === 'savings_account');
-      const extraG = (hasSA && interest >= 5) ? 30 : 0;
+      const extraG = (hasSA && interest >= 5) ? 25 : 0;
       return g + baseIncome + interest + extraG;
     });
 
