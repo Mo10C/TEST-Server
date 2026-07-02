@@ -70,12 +70,8 @@ function loadOverrides() {
    Firestore 側は該当コレクションに read/write を許可するルールが必要。 */
 const firebaseConfig = {
   apiKey: "AIzaSyDeg92vX9vqWODJ8TbufZv_-H2abGEDLfo",
-  authDomain: "st-simulator.firebaseapp.com",
   projectId: "st-simulator",
-  storageBucket: "st-simulator.firebasestorage.app",
-  messagingSenderId: "717010865771",
-  appId: "1:717010865771:web:83c3c74c7a1f8a73cd2b2e",
-  measurementId: "G-RWSQLM1P3H"
+   collection: 'sim_seed_stats'
 };
 const seedStatsShared = () => !!(SEED_STATS_CONFIG.apiKey && SEED_STATS_CONFIG.projectId);
 const SEED_STATS_LOCAL_KEY = 'tft_sim_seed_stats_v1';
