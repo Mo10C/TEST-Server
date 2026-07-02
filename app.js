@@ -45,16 +45,15 @@ const DEFAULT_OVERRIDES = {
   //   orbs の並びは comp×n → GRAY×n → BLUE×n（選択中プランの構成と同順）
   //   planIndex が dropPlanIndex と一致する時のみ有効。
   dropConfig: null,
+  // 🌟 ショップ指定：各ラウンド開始時のショップ5枠を固定
+  //   { '1-2':[champId|null ×5], '1-3':[...], '1-4':[...], '2-1':[...] }
+  //   null枠はランダム（従来通り）。リロール後のショップには適用されない。
+  shopPicks: null,
   // 🌟 チート：2-1で提示されるオーグメントを任意指定
   //   { initial:[id|null,id|null,id|null], reroll:[id|null,id|null,id|null] }
   //   initial = 最初に出る3枠 / reroll = 各枠を再抽選したとき最初に出る3枠。
   //   null または各要素null＝その枠はランダム（従来通り）。ティアはまたいで指定可。
-  augmentPicks: null,
-  // 🌟 チート：ドロップの順番と内容を任意指定
-  //   { sequence: [ { orb:'comp'|'GRAY'|'BLUE', outcome:string|null, champs:[id|null,..]|null, itemId:string|null } ] }
-  //   sequence があれば dropPlanIndex のプランに代わり、この順番・内容でドロップする。
-  //   outcome/champs/itemId が null の部分は従来通りランダム。
-  dropSetup: null
+  augmentPicks: null
 };
 const OVERRIDE_STORAGE_KEY = 'tft_set17_overrides_v1';
 function loadOverrides() {
@@ -64,6 +63,69 @@ function loadOverrides() {
   } catch (e) {}
   return { ...DEFAULT_OVERRIDES };
 }
+/* ── 📊 シード統計（同じシードの最終盤面データを集計） ──
+   Firebase Firestore の REST API を使用（SDK 不要・index.html 変更不要）。
+   下の SEED_STATS_CONFIG に apiKey / projectId を入れると全ユーザーで共有される。
+   未設定の場合は localStorage のみ（このブラウザの自分の記録だけ）で動作する。
+   Firestore 側は該当コレクションに read/write を許可するルールが必要。 */
+const SEED_STATS_CONFIG = {
+  apiKey: '',                      // Firebase コンソール > プロジェクトの設定 > ウェブAPIキー
+  projectId: '',                   // Firebase プロジェクトID
+  collection: 'sim_seed_stats',    // 保存先コレクション名
+};
+const seedStatsShared = () => !!(SEED_STATS_CONFIG.apiKey && SEED_STATS_CONFIG.projectId);
+const SEED_STATS_LOCAL_KEY = 'tft_sim_seed_stats_v1';
+const getStatsPlayerName = () => { try { return localStorage.getItem('tft_sim_player_name') || ''; } catch (e) { return ''; } };
+const setStatsPlayerName = (v) => { try { localStorage.setItem('tft_sim_player_name', v || ''); } catch (e) {} };
+
+async function submitSeedRecord(record) {
+  // 常にローカルにも保存（共有未設定でも自分の統計が見られる）
+  try {
+    const arr = JSON.parse(localStorage.getItem(SEED_STATS_LOCAL_KEY) || '[]');
+    arr.push(record);
+    while (arr.length > 500) arr.shift();   // 容量保護
+    localStorage.setItem(SEED_STATS_LOCAL_KEY, JSON.stringify(arr));
+  } catch (e) {}
+  if (!seedStatsShared()) return { shared: false };
+  try {
+    const url = `https://firestore.googleapis.com/v1/projects/${SEED_STATS_CONFIG.projectId}/databases/(default)/documents/${SEED_STATS_CONFIG.collection}?key=${SEED_STATS_CONFIG.apiKey}`;
+    const body = { fields: {
+      seed:  { stringValue: record.seed },
+      ts:    { integerValue: String(record.ts) },
+      user:  { stringValue: record.user || '名無し' },
+      cheat: { booleanValue: !!record.cheat },
+      data:  { stringValue: JSON.stringify(record.data) },
+    } };
+    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    return { shared: res.ok };
+  } catch (e) { return { shared: false, error: e.message }; }
+}
+
+async function fetchSeedRecords(seed) {
+  let local = [];
+  try { local = (JSON.parse(localStorage.getItem(SEED_STATS_LOCAL_KEY) || '[]')).filter(r => r.seed === seed); } catch (e) {}
+  if (!seedStatsShared()) return { records: local, shared: false };
+  try {
+    const url = `https://firestore.googleapis.com/v1/projects/${SEED_STATS_CONFIG.projectId}/databases/(default)/documents:runQuery?key=${SEED_STATS_CONFIG.apiKey}`;
+    const q = { structuredQuery: {
+      from: [{ collectionId: SEED_STATS_CONFIG.collection }],
+      where: { fieldFilter: { field: { fieldPath: 'seed' }, op: 'EQUAL', value: { stringValue: seed } } },
+      limit: 1000,
+    } };
+    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(q) });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const rows = await res.json();
+    const records = (Array.isArray(rows) ? rows : []).filter(r => r.document && r.document.fields).map(r => {
+      const f = r.document.fields;
+      let data = {}; try { data = JSON.parse((f.data && f.data.stringValue) || '{}'); } catch (e) {}
+      return { seed: f.seed?.stringValue || seed, ts: Number(f.ts?.integerValue || 0), user: f.user?.stringValue || '名無し', cheat: !!(f.cheat && f.cheat.booleanValue), data };
+    });
+    return { records, shared: true };
+  } catch (e) {
+    return { records: local, shared: false, error: e.message }; // 通信失敗時はローカルにフォールバック
+  }
+}
+
 function saveOverrides(o) {
   try { localStorage.setItem(OVERRIDE_STORAGE_KEY, JSON.stringify(o)); } catch (e) {}
 }
@@ -569,6 +631,157 @@ function ReplayViewer({ history, seed, onClose }) {
           onChange={e => { setPlaying(false); setIdx(Number(e.target.value)); }}
           style={{ width: '100%', accentColor: 'var(--gold2)', cursor: 'pointer', flexShrink: 0 }} />
         <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.4)', textAlign: 'center', flexShrink: 0 }}>← / → キーでコマ送り、スペースで再生/停止</div>
+      </div>
+    </div>
+  );
+}
+
+/* ── 📊 シード統計ドロワー（結果画面の右から出る） ── */
+function SeedStatsDrawer({ seed, open, onClose }) {
+  const [loading, setLoading] = useState(false);
+  const [records, setRecords] = useState([]);
+  const [sharedMode, setSharedMode] = useState(false);
+  const [errMsg, setErrMsg] = useState(null);
+  const [includeCheat, setIncludeCheat] = useState(true);
+  const [playerName, setPlayerName] = useState(getStatsPlayerName());
+
+  const load = async () => {
+    setLoading(true); setErrMsg(null);
+    const res = await fetchSeedRecords(seed);
+    setRecords(res.records || []);
+    setSharedMode(!!res.shared);
+    if (res.error) setErrMsg(res.error);
+    setLoading(false);
+  };
+  useEffect(() => { if (open) load(); }, [open, seed]);
+
+  // 集計
+  const agg = useMemo(() => {
+    const recs = includeCheat ? records : records.filter(r => !r.cheat);
+    const n = recs.length;
+    const augMap = new Map(), boardMap = new Map(), benchMap = new Map(), itemMap = new Map();
+    const bump = (map, key, meta) => { const cur = map.get(key) || { count: 0, ...meta }; cur.count++; map.set(key, cur); };
+    recs.forEach(r => {
+      const d = r.data || {};
+      // 1記録につき同一要素は1回だけカウント（率＝その要素が出た試合の割合）
+      new Set((d.augments || []).map(a => a.name + '\u0001' + (a.tier || ''))).forEach(k => {
+        const [name, tier] = k.split('\u0001'); bump(augMap, name, { name, tier });
+      });
+      new Set((d.board || []).map(u => u.id + '\u0001' + u.star + '\u0001' + u.jaName)).forEach(k => {
+        const [id, star, jaName] = k.split('\u0001'); bump(boardMap, id + '_' + star, { id, star: Number(star), jaName });
+      });
+      new Set((d.bench || []).map(u => u.id + '\u0001' + u.star + '\u0001' + u.jaName)).forEach(k => {
+        const [id, star, jaName] = k.split('\u0001'); bump(benchMap, id + '_' + star, { id, star: Number(star), jaName });
+      });
+      new Set(d.items || []).forEach(name => bump(itemMap, name, { name }));
+    });
+    const sorted = (m) => [...m.values()].sort((a, b) => b.count - a.count);
+    return { n, cheatCount: records.filter(r => r.cheat).length,
+      augs: sorted(augMap), board: sorted(boardMap), bench: sorted(benchMap), items: sorted(itemMap) };
+  }, [records, includeCheat]);
+
+  const pct = (c) => agg.n ? Math.round((c / agg.n) * 100) : 0;
+  const champById = (id) => (typeof CHAMPS !== 'undefined' ? CHAMPS : []).find(c => c.id === id);
+  const barRow = (key, iconEl, labelEl, count) => (
+    <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 6px', borderRadius: 7, background: 'rgba(15,23,42,0.5)', position: 'relative', overflow: 'hidden' }}>
+      <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: pct(count) + '%', background: 'rgba(212,175,55,0.14)', pointerEvents: 'none' }} />
+      {iconEl}
+      <div style={{ flex: 1, minWidth: 0, fontSize: 11.5, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', zIndex: 1 }}>{labelEl}</div>
+      <div style={{ fontSize: 11.5, fontWeight: 900, color: 'var(--gold2)', zIndex: 1, flexShrink: 0 }}>{pct(count)}%</div>
+      <div style={{ fontSize: 9.5, color: 'rgba(255,255,255,0.45)', zIndex: 1, flexShrink: 0 }}>({count}/{agg.n})</div>
+    </div>
+  );
+  const secTitle = (t) => (<div style={{ fontSize: 11, fontWeight: 900, color: 'var(--gold2)', letterSpacing: 1, margin: '12px 0 6px', borderBottom: '1px solid rgba(148,163,184,0.3)', paddingBottom: 4 }}>{t}</div>);
+  const starsTxt = (star) => '★'.repeat(star);
+
+  return (
+    <div style={{ position: 'fixed', top: 0, right: 0, height: '100vh', width: 'min(400px, 94vw)', zIndex: 9600,
+      background: 'rgba(8,16,26,0.97)', borderLeft: '1px solid var(--border)', boxShadow: '-12px 0 40px rgba(0,0,0,0.6)',
+      transform: open ? 'translateX(0)' : 'translateX(105%)', transition: 'transform 0.3s cubic-bezier(0.4,0,0.2,1)',
+      display: 'flex', flexDirection: 'column' }}>
+
+      {/* ヘッダー */}
+      <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexShrink: 0 }}>
+        <div>
+          <div style={{ fontFamily: 'Orbitron', fontSize: 14, fontWeight: 900, color: '#fff', letterSpacing: 2 }}>📊 シード統計</div>
+          <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)', marginTop: 2 }}>SEED: {seed} ・ {sharedMode ? '🌐 共有データ' : '💾 このブラウザの記録のみ'}</div>
+        </div>
+        <button onClick={onClose} style={{ width: 30, height: 30, borderRadius: 7, background: 'rgba(220,53,69,0.6)', border: '1px solid var(--red)', color: '#fff', fontWeight: 900, fontSize: 14, cursor: 'pointer', flexShrink: 0 }}>✕</button>
+      </div>
+
+      {/* ツールバー */}
+      <div style={{ padding: '10px 16px', borderBottom: '1px solid rgba(148,163,184,0.25)', display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0 }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <span style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.6)', flexShrink: 0 }}>プレイヤー名:</span>
+          <input value={playerName} placeholder="名無し"
+            onChange={e => { setPlayerName(e.target.value); setStatsPlayerName(e.target.value); }}
+            style={{ flex: 1, minWidth: 0, padding: '6px 9px', borderRadius: 7, background: 'rgba(15,23,42,0.9)', color: '#fff', border: '1px solid var(--border)', fontSize: 11.5, fontFamily: 'Noto Sans JP' }} />
+          <button onClick={load} disabled={loading} style={{ padding: '6px 10px', borderRadius: 7, background: 'rgba(0,102,204,0.5)', border: '1px solid var(--blue)', color: '#fff', fontSize: 11, fontWeight: 700, cursor: 'pointer', flexShrink: 0, opacity: loading ? 0.5 : 1 }}>🔄 更新</button>
+        </div>
+        <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 10.5, color: 'rgba(255,255,255,0.65)', cursor: 'pointer' }}>
+          <input type="checkbox" checked={includeCheat} onChange={e => setIncludeCheat(e.target.checked)} style={{ accentColor: 'var(--gold2)' }} />
+          チート使用の記録を含める{agg.cheatCount > 0 ? `（${agg.cheatCount}件）` : ''}
+        </label>
+      </div>
+
+      {/* 本文 */}
+      <div style={{ flex: 1, overflowY: 'auto', padding: '10px 16px 20px' }}>
+        {loading ? (
+          <div style={{ textAlign: 'center', color: 'rgba(255,255,255,0.5)', fontSize: 12, padding: 30 }}>読み込み中…</div>
+        ) : agg.n === 0 ? (
+          <div style={{ textAlign: 'center', color: 'rgba(255,255,255,0.5)', fontSize: 12, padding: 30, lineHeight: 1.8 }}>
+            このシードの記録はまだありません。<br />ゲームを最後までプレイすると自動で記録されます。
+          </div>
+        ) : (
+          <React.Fragment>
+            <div style={{ fontSize: 12, fontWeight: 900, color: '#fff', textAlign: 'center', padding: '8px 0', background: 'rgba(212,175,55,0.12)', borderRadius: 8, border: '1px solid rgba(212,175,55,0.4)' }}>
+              🎮 {agg.n} 回のプレイデータ
+            </div>
+            {errMsg && <div style={{ fontSize: 10, color: '#ff9f43', marginTop: 6 }}>⚠ 共有データの取得に失敗（ローカル表示中）: {errMsg}</div>}
+
+            {secTitle('✨ オーグメント取得率')}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {agg.augs.length === 0 ? <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>データなし</span> :
+                agg.augs.map(a => barRow('aug_' + a.name,
+                  <span style={{ fontSize: 13, flexShrink: 0, zIndex: 1 }}>✨</span>,
+                  <span style={{ color: (typeof TIER_COLORS !== 'undefined' && TIER_COLORS[a.tier]) || '#fff' }}>{a.name}</span>,
+                  a.count))}
+            </div>
+
+            {secTitle('♟️ 盤面チャンピオン率（★別）')}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {agg.board.length === 0 ? <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>データなし</span> :
+                agg.board.map(u => {
+                  const c = champById(u.id);
+                  return barRow('b_' + u.id + '_' + u.star,
+                    <img src={c ? boardIcon(c.img) : ''} style={{ width: 24, height: 24, borderRadius: 5, border: `1px solid ${c ? COST_COLORS[c.cost] : 'var(--border)'}`, objectFit: 'cover', flexShrink: 0, zIndex: 1, background: '#1e293b' }} />,
+                    <span>{u.jaName} <span style={{ color: STAR_COLORS[u.star] || '#fff' }}>{starsTxt(u.star)}</span></span>,
+                    u.count);
+                })}
+            </div>
+
+            {secTitle('🪑 ベンチのコマ（★別）')}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {agg.bench.length === 0 ? <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>データなし</span> :
+                agg.bench.map(u => {
+                  const c = champById(u.id);
+                  return barRow('be_' + u.id + '_' + u.star,
+                    <img src={c ? boardIcon(c.img) : ''} style={{ width: 24, height: 24, borderRadius: 5, border: `1px solid ${c ? COST_COLORS[c.cost] : 'var(--border)'}`, objectFit: 'cover', flexShrink: 0, zIndex: 1, background: '#1e293b' }} />,
+                    <span>{u.jaName} <span style={{ color: STAR_COLORS[u.star] || '#fff' }}>{starsTxt(u.star)}</span></span>,
+                    u.count);
+                })}
+            </div>
+
+            {secTitle('🗡️ 盤面の完成アイテム')}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {agg.items.length === 0 ? <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>データなし</span> :
+                agg.items.map(it => barRow('it_' + it.name,
+                  <img src={getMetaTFTItemUrl(it.name)} style={{ width: 24, height: 24, borderRadius: 5, border: '1px solid var(--gold)', flexShrink: 0, zIndex: 1, background: '#1e293b' }} />,
+                  <span>{getJaName(it.name)}</span>,
+                  it.count))}
+            </div>
+          </React.Fragment>
+        )}
       </div>
     </div>
   );
@@ -1605,6 +1818,95 @@ function DropPickerScreen({ ov, setOvKey, onBack }) {
   );
 }
 
+/* ── 🛍️ ショップ指定 専用画面（設定から開く） ── */
+function ShopPickerScreen({ ov, setOvKey, onBack }) {
+  const ROUNDS = ['1-2', '1-3', '1-4', '2-1'];
+  const allChamps = (typeof CHAMPS !== 'undefined' ? CHAMPS : []);
+  const sp = (ov.shopPicks && typeof ov.shopPicks === 'object') ? ov.shopPicks : {};
+  const getRow = (r) => Array.isArray(sp[r]) ? sp[r] : [null, null, null, null, null];
+  const setSlot = (r, i, id) => {
+    const next = {};
+    ROUNDS.forEach(rr => {
+      const row = [...getRow(rr)];
+      if (rr === r) row[i] = id || null;
+      next[rr] = row;
+    });
+    const any = ROUNDS.some(rr => next[rr].some(Boolean));
+    setOvKey({ shopPicks: any ? next : null });
+  };
+  const clearAll = () => setOvKey({ shopPicks: null });
+  const setCount = ROUNDS.reduce((n, r) => n + getRow(r).filter(Boolean).length, 0);
+  const selStyle = { padding: '8px 9px', borderRadius: 8, background: 'rgba(15,23,42,0.9)', color: '#fff', border: '1px solid var(--border)', fontSize: 12, fontFamily: 'Noto Sans JP', cursor: 'pointer' };
+  const costGroups = [1, 2, 3, 4, 5].map(cost => ({ cost, list: allChamps.filter(c => c.cost === cost) })).filter(g => g.list.length > 0);
+
+  return (
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14, padding: 16,
+      backgroundImage: `linear-gradient(rgba(0,0,0,0.82), rgba(0,0,0,0.82)), url("https://assets.st-note.com/production/uploads/images/263587712/rectangle_large_type_2_386d7257054746a6649e14bdb1432725.jpeg?width=4000&height=4000&fit=bounds&format=jpg&quality=90")`,
+      backgroundSize: 'cover', backgroundPosition: 'center', animation: 'fadeIn 0.4s ease' }}>
+      <div style={{ fontFamily: 'Orbitron', fontSize: 'clamp(18px,4vw,30px)', fontWeight: 900, color: '#fff', letterSpacing: 4, textShadow: '0 0 10px rgba(0,0,0,0.9), 0 0 18px var(--gold)', marginTop: 4 }}>🛍️ ショップを指定</div>
+
+      <div style={{ width: 'min(1020px, 96vw)', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 12, background: 'rgba(8,16,26,0.85)', border: '1px solid var(--border)', borderRadius: 16, padding: 16, boxShadow: '0 20px 60px rgba(0,0,0,0.6)' }}>
+
+        <div style={{ color: 'rgba(255,255,255,0.55)', fontSize: 11.5, lineHeight: 1.6, flexShrink: 0 }}>
+          各ラウンド<b style={{ color: '#fff' }}>開始時</b>のショップ5枠を固定できます。「ランダム」のままの枠は従来通りの抽選です。※リロール後のショップには適用されません。
+        </div>
+
+        {/* ラウンドごとのショップ行 */}
+        <div style={{ flex: 1, minHeight: 80, overflowY: 'auto', paddingRight: 4, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {ROUNDS.map(r => {
+            const row = getRow(r);
+            const rowCount = row.filter(Boolean).length;
+            return (
+              <div key={r} style={{ background: 'rgba(15,23,42,0.6)', border: `2px solid ${rowCount > 0 ? 'var(--gold2)' : 'var(--border)'}`, borderRadius: 12, padding: '12px 14px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                  <span style={{ fontFamily: 'Orbitron', fontSize: 14, fontWeight: 900, color: rowCount > 0 ? 'var(--gold2)' : '#fff', letterSpacing: 2 }}>📅 {r} のショップ</span>
+                  {rowCount > 0 && <span style={{ fontSize: 10.5, fontWeight: 700, color: 'rgba(255,255,255,0.6)' }}>{rowCount}/5 指定中</span>}
+                </div>
+                {/* 5枠を横並び（狭い画面では折り返し） */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 8 }}>
+                  {[0, 1, 2, 3, 4].map(i => {
+                    const selId = row[i];
+                    const selChamp = selId ? allChamps.find(c => c.id === selId) : null;
+                    return (
+                      <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(11,22,34,0.7)', border: `1px solid ${selChamp ? COST_COLORS[selChamp.cost] : 'var(--border)'}`, borderRadius: 9, padding: '7px 8px' }}>
+                        <div style={{ width: 34, height: 34, borderRadius: 6, overflow: 'hidden', flexShrink: 0, background: '#1e293b', border: `2px solid ${selChamp ? COST_COLORS[selChamp.cost] : 'var(--border)'}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          {selChamp
+                            ? <img src={boardIcon(selChamp.img)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            : <span style={{ fontSize: 14, color: 'rgba(255,255,255,0.35)' }}>{i + 1}</span>}
+                        </div>
+                        <select style={{ ...selStyle, flex: 1, minWidth: 0 }} value={selId || ''} onChange={e => setSlot(r, i, e.target.value || null)}>
+                          <option value="">ランダム</option>
+                          {costGroups.map(g => (
+                            <optgroup key={g.cost} label={`${g.cost}コスト`}>
+                              {g.list.map(c => (<option key={c.id} value={c.id}>{c.jaName}</option>))}
+                            </optgroup>
+                          ))}
+                        </select>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* フッター */}
+        <div style={{ display: 'flex', gap: 10, flexShrink: 0 }}>
+          <button onClick={clearAll} disabled={setCount === 0}
+            style={{ flex: '0 0 auto', padding: '11px 16px', borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: setCount === 0 ? 'default' : 'pointer',
+              color: '#fff', background: setCount === 0 ? 'rgba(80,20,20,0.35)' : 'rgba(80,20,20,0.7)', border: '1px solid var(--red)', opacity: setCount === 0 ? 0.5 : 1 }}>
+            ↺ 全部ランダムに戻す
+          </button>
+          <button onClick={onBack} className="menu-btn" style={{ flex: 1, background: 'var(--blue)', color: '#fff', borderColor: 'var(--blue)', fontWeight: 900 }}>
+            ✓ 設定に戻る（{setCount}/20 指定中）
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ── メインアプリ ── */
 /* ── メインアプリ ── */
 function SettingsScreen({ bindings, onChange, overrides = DEFAULT_OVERRIDES, onChangeOverrides = () => {}, onBack, onStartNewGame = null, backLabel = 'メニューに戻る' }) {
@@ -1614,6 +1916,7 @@ function SettingsScreen({ bindings, onChange, overrides = DEFAULT_OVERRIDES, onC
   const [ov, setOv] = useState(overrides);          // 🌟 ゲーム内設定のオーバーライド
   const [augPickerOpen, setAugPickerOpen] = useState(false); // 🌟 オーグメント指定の別画面
   const [dropPickerOpen, setDropPickerOpen] = useState(false); // 🌟 ドロップ設定の別画面
+  const [shopPickerOpen, setShopPickerOpen] = useState(false); // 🌟 ショップ指定の別画面
 
   // 入力待ち中：次に押されたキーを割り当てる
   useEffect(() => {
@@ -1734,6 +2037,17 @@ function SettingsScreen({ bindings, onChange, overrides = DEFAULT_OVERRIDES, onC
         ov={ov}
         setOvKey={setOvKey}
         onBack={() => setDropPickerOpen(false)}
+      />
+    );
+  }
+
+  // 🌟 ショップ指定も専用の別画面で行う
+  if (shopPickerOpen) {
+    return (
+      <ShopPickerScreen
+        ov={ov}
+        setOvKey={setOvKey}
+        onBack={() => setShopPickerOpen(false)}
       />
     );
   }
@@ -1910,6 +2224,32 @@ function SettingsScreen({ bindings, onChange, overrides = DEFAULT_OVERRIDES, onC
               {dropPlanSel ? `${dropPlanSel.label.replace(/【(BASE|HIGH)】/, '')}${dropSetCount > 0 ? ` ・ ${dropSetCount}件指定` : ''}` : '未指定'}
             </span>
           </button>
+        </div>
+
+        {/* 🛍️ ショップ指定（別画面ピッカー） */}
+        <div style={{ marginBottom:16 }}>
+          <div style={fLabel}>🛍️ ショップ指定 <span style={{ color:'rgba(255,255,255,0.45)', fontWeight:400 }}>（各ラウンド開始時の5枠を固定）</span></div>
+          {(() => {
+            const spRows = (ov.shopPicks && typeof ov.shopPicks === 'object') ? ov.shopPicks : {};
+            const shopSetCount = ['1-2','1-3','1-4','2-1'].reduce((n, r) => n + (Array.isArray(spRows[r]) ? spRows[r].filter(Boolean).length : 0), 0);
+            return (
+              <button
+                onClick={() => setShopPickerOpen(true)}
+                style={{ width:'100%', padding:'13px 16px', borderRadius:10, cursor:'pointer', fontFamily:'Noto Sans JP', fontWeight:900, fontSize:13.5,
+                  display:'flex', alignItems:'center', justifyContent:'center', gap:10, transition:'all 0.15s',
+                  color: shopSetCount>0 ? '#08101a' : '#fff',
+                  background: shopSetCount>0 ? 'var(--gold2)' : 'rgba(15,23,42,0.85)',
+                  border:`2px solid ${shopSetCount>0 ? 'var(--gold2)' : 'var(--blue)'}`,
+                  boxShadow: shopSetCount>0 ? '0 0 14px var(--gold)' : 'none' }}>
+                ショップを指定
+                <span style={{ fontSize:11, fontWeight:700, padding:'2px 8px', borderRadius:20,
+                  background: shopSetCount>0 ? 'rgba(8,16,26,0.25)' : 'rgba(255,255,255,0.12)',
+                  color: shopSetCount>0 ? '#08101a' : 'rgba(255,255,255,0.8)' }}>
+                  {shopSetCount>0 ? `${shopSetCount}/20 指定中` : '未指定'}
+                </span>
+              </button>
+            );
+          })()}
         </div>
 
         {/* オーグメント指定（別画面ピッカー） */}
@@ -2128,7 +2468,18 @@ function App({ seed, onRestart, onNewGame, keyBindings = DEFAULT_KEYBINDINGS, ga
   const [level, setLevel] = useState(1);
   const [xp, setXp] = useState(0);
   const [round, setRound] = useState('1-1');
-  const [shop, setShop] = useState(() => rollShop(1, rngShop));
+  const [shop, setShop] = useState(() => {
+    // 🌟 ショップ指定：1-2の初期ショップ。自然な抽選を必ず消費した上で指定枠だけ上書き
+    const natural = rollShop(1, rngShop);
+    const picks = gameOverrides && gameOverrides.shopPicks && gameOverrides.shopPicks['1-2'];
+    if (!picks) return natural;
+    return natural.map((slot, i) => {
+      const id = picks[i];
+      if (!id) return slot;
+      const c = CHAMPS.find(ch => ch.id === id);
+      return c ? { ...c, star: 1, uid: slot.uid } : slot;  // uidは自然抽選のものを流用
+    });
+  });
   const [bench, setBench] = useState(Array(9).fill(null));
   const [board, setBoard] = useState(initBoard);
   const [inventory, setInventory] = useState([]);
@@ -2163,6 +2514,31 @@ function App({ seed, onRestart, onNewGame, keyBindings = DEFAULT_KEYBINDINGS, ga
   //    ＝1回の effect 実行にまとまるため、個別のアクションをフックする必要がない。
   const historyRef = useRef([]);
   const [showReplay, setShowReplay] = useState(false);
+  const [showSeedStats, setShowSeedStats] = useState(false); // 📊 シード統計ドロワー
+  const statsSubmittedRef = useRef(false);
+
+  // 📊 ゲーム終了時に最終盤面データを1回だけ記録
+  useEffect(() => {
+    if (!isFinished || statsSubmittedRef.current) return;
+    statsSubmittedRef.current = true;
+    const hasCheat = !!(gameOverrides && Object.keys(DEFAULT_OVERRIDES).some(k => gameOverrides[k] != null));
+    const pickUnits = (arr) => arr.filter(u => u && !u.isAnvil).map(u => ({ id: u.id, jaName: u.jaName, star: u.star || 1 }));
+    const record = {
+      seed, ts: Date.now(),
+      user: getStatsPlayerName() || '名無し',
+      cheat: hasCheat,
+      data: {
+        augments: augments.map(a => ({ name: a.name, tier: a.tier })),
+        board: pickUnits(board),
+        bench: pickUnits(bench),
+        // 盤面ユニットに装備中の完成系アイテム（素材・消耗品を除く）
+        items: board.filter(u => u && !u.isAnvil).flatMap(u => u.items || [])
+          .filter(it => it && it.type !== 'comp' && it.type !== 'consumable').map(it => it.name),
+      },
+    };
+    submitSeedRecord(record);
+  }, [isFinished]);
+
 
   useEffect(() => {
     // 終了後は状態変化が起きないため自然に記録が止まる（最終コマまで記録される）
@@ -3317,7 +3693,7 @@ useEffect(() => {
         }
       }
       const hasUM = passiveBuffs.some(b => b.type === 'upward_mobility');
-      if (hasUM) setFreeRerolls(fr => fr + 2);
+      if (hasUM) setFreeRerolls(fr => fr + 1);
       
       const hasEp = passiveBuffs.some(b => b.type === 'epoch');
       if (hasEp) {
@@ -3329,7 +3705,18 @@ useEffect(() => {
 
     setLevel(newLevel); 
     setXp(newXp);
-    setShop(rollShop(newLevel, rngShop));
+    // 🌟 ショップ指定：自然な抽選（rollShop）を必ず消費した上で、指定枠だけ内容を上書き
+    {
+      const natural = rollShop(newLevel, rngShop);
+      const picks = gameOverrides && gameOverrides.shopPicks && gameOverrides.shopPicks[nextR];
+      const finalShop = picks ? natural.map((slot, i) => {
+        const id = picks[i];
+        if (!id) return slot;
+        const c = CHAMPS.find(ch => ch.id === id);
+        return c ? { ...c, star: 1, uid: slot.uid } : slot;  // uidは自然抽選のものを流用
+      }) : natural;
+      setShop(finalShop);
+    }
 
     if (nextR === '2-1' && !noMoreAugments) {
       setShowAugment(true);
@@ -3823,9 +4210,13 @@ const handleAugmentPick = (aug, historyContext) => {
           <ReplayViewer history={historyRef.current} seed={seed} onClose={() => setShowReplay(false)} />
         )}
 
+        {/* 📊 シード統計ドロワー（右からスライドイン） */}
+        <SeedStatsDrawer seed={seed} open={showSeedStats} onClose={() => setShowSeedStats(false)} />
+
         {/* 🌟 1. ボタン類を上部に集約！シード値コピーもここへ移動 */}
         <div style={{display:'flex', gap:12, marginBottom:5}}>
           <button className="menu-btn" onClick={() => setShowReplay(true)} style={{padding:'10px 20px',fontSize:13, background:'var(--gold2)', color:'#08101a', borderColor:'var(--gold2)', fontWeight:900}}>🎬 振り返り</button>
+          <button className="menu-btn" onClick={() => setShowSeedStats(true)} style={{padding:'10px 20px',fontSize:13, background:'var(--purple)', color:'white', borderColor:'var(--purple)', fontWeight:900}}>📊 シード統計</button>
           <button className="menu-btn" onClick={onRestart} style={{padding:'10px 20px',fontSize:13, background:'var(--blue)', color:'white', borderColor:'var(--blue)'}}>同じシードで再挑戦</button>
           <button className="menu-btn" onClick={onNewGame} style={{padding:'10px 20px',fontSize:13, background:'var(--teal)', color:'white', borderColor:'var(--teal)'}}>新しいゲーム</button>
           <button className="menu-btn" onClick={() => setShowSettings(true)} style={{padding:'10px 20px',fontSize:13, background:'rgba(15,23,42,0.85)', color:'white', borderColor:'var(--border)'}}>⚙️ 設定</button>
