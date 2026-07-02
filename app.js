@@ -71,7 +71,7 @@ function loadOverrides() {
 const firebaseConfig = {
   apiKey: "AIzaSyDeg92vX9vqWODJ8TbufZv_-H2abGEDLfo",
   projectId: "st-simulator",
-   collection: 'sim_seed_stats'
+   collection: 'sim_seed_stats',
 };
 const seedStatsShared = () => !!(SEED_STATS_CONFIG.apiKey && SEED_STATS_CONFIG.projectId);
 const SEED_STATS_LOCAL_KEY = 'tft_sim_seed_stats_v1';
