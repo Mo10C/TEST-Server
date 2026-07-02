@@ -2517,27 +2517,31 @@ function App({ seed, onRestart, onNewGame, keyBindings = DEFAULT_KEYBINDINGS, ga
   const [showSeedStats, setShowSeedStats] = useState(false); // 📊 シード統計ドロワー
   const statsSubmittedRef = useRef(false);
 
-  // 📊 ゲーム終了時に最終盤面データを1回だけ記録
-  useEffect(() => {
-    if (!isFinished || statsSubmittedRef.current) return;
-    statsSubmittedRef.current = true;
-    const hasCheat = !!(gameOverrides && Object.keys(DEFAULT_OVERRIDES).some(k => gameOverrides[k] != null));
-    const pickUnits = (arr) => arr.filter(u => u && !u.isAnvil).map(u => ({ id: u.id, jaName: u.jaName, star: u.star || 1 }));
-    const record = {
-      seed, ts: Date.now(),
-      user: getStatsPlayerName() || '名無し',
-      cheat: hasCheat,
-      data: {
-        augments: augments.map(a => ({ name: a.name, tier: a.tier })),
-        board: pickUnits(board),
-        bench: pickUnits(bench),
-        // 盤面ユニットに装備中の完成系アイテム（素材・消耗品を除く）
-        items: board.filter(u => u && !u.isAnvil).flatMap(u => u.items || [])
-          .filter(it => it && it.type !== 'comp' && it.type !== 'consumable').map(it => it.name),
-      },
-    };
-    submitSeedRecord(record);
-  }, [isFinished]);
+  // 📊 「みんなの結果」ボタンを押したタイミングで初めて自分の結果を記録する
+  //    （放置ゲーム・途中終了などの変な結果が自動で蓄積されるのを防ぐ。
+  //      共有するのは「結果を見る」という能動的な操作をした人だけ）
+  const openSeedStats = async () => {
+    if (isFinished && !statsSubmittedRef.current) {
+      statsSubmittedRef.current = true;
+      const hasCheat = !!(gameOverrides && Object.keys(DEFAULT_OVERRIDES).some(k => gameOverrides[k] != null));
+      const pickUnits = (arr) => arr.filter(u => u && !u.isAnvil).map(u => ({ id: u.id, jaName: u.jaName, star: u.star || 1 }));
+      const record = {
+        seed, ts: Date.now(),
+        user: getStatsPlayerName() || '名無し',
+        cheat: hasCheat,
+        data: {
+          augments: augments.map(a => ({ name: a.name, tier: a.tier })),
+          board: pickUnits(board),
+          bench: pickUnits(bench),
+          // 盤面ユニットに装備中の完成系アイテム（素材・消耗品を除く）
+          items: board.filter(u => u && !u.isAnvil).flatMap(u => u.items || [])
+            .filter(it => it && it.type !== 'comp' && it.type !== 'consumable').map(it => it.name),
+        },
+      };
+      try { await submitSeedRecord(record); } catch (e) {}  // 記録完了を待ってから開く（直後の集計に反映させる）
+    }
+    setShowSeedStats(true);
+  };
 
 
   useEffect(() => {
@@ -4216,7 +4220,7 @@ const handleAugmentPick = (aug, historyContext) => {
         {/* 🌟 1. ボタン類を上部に集約！シード値コピーもここへ移動 */}
         <div style={{display:'flex', gap:12, marginBottom:5}}>
           <button className="menu-btn" onClick={() => setShowReplay(true)} style={{padding:'10px 20px',fontSize:13, background:'var(--gold2)', color:'#08101a', borderColor:'var(--gold2)', fontWeight:900}}>🎬 振り返り</button>
-          <button className="menu-btn" onClick={() => setShowSeedStats(true)} style={{padding:'10px 20px',fontSize:13, background:'var(--purple)', color:'white', borderColor:'var(--purple)', fontWeight:900}}>📊 シード統計</button>
+          <button className="menu-btn" onClick={openSeedStats} style={{padding:'10px 20px',fontSize:13, background:'var(--purple)', color:'white', borderColor:'var(--purple)', fontWeight:900}}>📊 みんなの結果</button>
           <button className="menu-btn" onClick={onRestart} style={{padding:'10px 20px',fontSize:13, background:'var(--blue)', color:'white', borderColor:'var(--blue)'}}>同じシードで再挑戦</button>
           <button className="menu-btn" onClick={onNewGame} style={{padding:'10px 20px',fontSize:13, background:'var(--teal)', color:'white', borderColor:'var(--teal)'}}>新しいゲーム</button>
           <button className="menu-btn" onClick={() => setShowSettings(true)} style={{padding:'10px 20px',fontSize:13, background:'rgba(15,23,42,0.85)', color:'white', borderColor:'var(--border)'}}>⚙️ 設定</button>

@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TFT Simulator - データエディタ</title>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Orbitron:wght@700;900&family=Noto+Sans+JP:wght@400;700;900&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0b1320;color:#e2e8f0;font-family:'Noto Sans JP',sans-serif;min-height:100vh}
+.header{padding:16px 22px;border-bottom:1px solid #2a3a55;display:flex;align-items:center;gap:14px;background:#0e1830}
+.header h1{font-family:'Orbitron';font-size:17px;letter-spacing:3px;color:#fff}
+.header .sub{font-size:11px;color:#7d8aa5}
+.tabs{display:flex;border-bottom:1px solid #2a3a55;background:#0e1830;padding:0 14px}
+.tab{padding:12px 18px;font-size:13px;font-weight:900;color:#7d8aa5;cursor:pointer;border-bottom:3px solid transparent;transition:all .15s}
+.tab.active{color:#d4af37;border-bottom-color:#d4af37}
+.tab:hover{color:#fff}
+.page{display:none;padding:18px 22px;max-width:1200px;margin:0 auto}
+.page.active{display:block}
+.card{background:#101c33;border:1px solid #2a3a55;border-radius:12px;padding:16px;margin-bottom:14px}
+.card h2{font-size:13.5px;font-weight:900;color:#d4af37;margin-bottom:10px;letter-spacing:.5px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+label{font-size:11.5px;color:#9aa8c0;font-weight:700}
+input[type=text],input[type=number],select,textarea{background:#0b1424;border:1px solid #2a3a55;color:#fff;border-radius:7px;padding:7px 10px;font-size:12.5px;font-family:'Noto Sans JP'}
+input[type=text]:focus,textarea:focus{outline:none;border-color:#3399ff}
+button{background:#16345e;border:1px solid #3399ff;color:#fff;border-radius:8px;padding:8px 14px;font-size:12.5px;font-weight:900;cursor:pointer;font-family:'Noto Sans JP';transition:all .12s}
+button:hover{background:#1d4478}
+button.gold{background:#5e4a16;border-color:#d4af37}
+button.gold:hover{background:#78601d}
+button.danger{background:#5e1616;border-color:#dc3545}
+button.danger:hover{background:#781d1d}
+button:disabled{opacity:.4;cursor:default}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{text-align:left;padding:7px 8px;color:#9aa8c0;border-bottom:1px solid #2a3a55;font-size:11px;white-space:nowrap}
+td{padding:6px 8px;border-bottom:1px solid #1c2a44;vertical-align:middle}
+tr:hover td{background:#14213a}
+.badge{display:inline-block;padding:1px 7px;border-radius:10px;font-size:10px;font-weight:900}
+.badge.cheat{background:#5e1616;color:#ff9f9f}
+.badge.clean{background:#164a2a;color:#8fe0a8}
+.pill{display:inline-block;background:#1c2a44;border-radius:6px;padding:1px 6px;margin:1px;font-size:10.5px}
+.pct-bar{position:relative;background:#0b1424;border-radius:6px;overflow:hidden;height:22px;margin-bottom:3px;display:flex;align-items:center}
+.pct-fill{position:absolute;left:0;top:0;bottom:0;background:rgba(212,175,55,.22)}
+.pct-label{position:relative;z-index:1;padding:0 8px;font-size:11px;font-weight:700;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pct-val{position:relative;z-index:1;padding:0 8px;font-size:11px;font-weight:900;color:#d4af37;white-space:nowrap}
+.note{font-size:11px;color:#7d8aa5;line-height:1.7}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px}
+.tier-silver{color:#b0c4de}.tier-gold{color:#d4af37}.tier-prismatic{color:#c084fc}
+textarea{width:100%;min-height:56px;resize:vertical;line-height:1.5}
+.champ-img{width:26px;height:26px;border-radius:5px;object-fit:cover;vertical-align:middle;background:#1e293b}
+.msg{position:fixed;bottom:18px;right:18px;background:#164a2a;border:1px solid #2fbf71;color:#c6f2d8;padding:10px 16px;border-radius:9px;font-size:12.5px;font-weight:700;display:none;z-index:99}
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>🛠️ TFT SIMULATOR EDITOR</h1>
+  <span class="sub">記録データの管理 / チャンピオン・オーグメントの編集</span>
+</div>
+<div class="tabs">
+  <div class="tab active" data-page="records">📊 記録データ</div>
+  <div class="tab" data-page="champs">🦸 チャンピオン</div>
+  <div class="tab" data-page="augs">✨ オーグメント</div>
+</div>
+
+<!-- ══════════ 📊 記録データ ══════════ -->
+<div class="page active" id="page-records">
+  <div class="card">
+    <h2>⚙️ Firebase 接続設定（app.js の SEED_STATS_CONFIG と同じ値）</h2>
+    <div class="row">
+      <label>apiKey:</label><input type="text" id="fb-key" style="width:280px" placeholder="AIza...">
+      <label>projectId:</label><input type="text" id="fb-pid" style="width:180px" placeholder="my-project">
+      <label>collection:</label><input type="text" id="fb-col" style="width:140px" value="sim_seed_stats">
+      <button onclick="saveFbCfg()">保存</button>
+    </div>
+    <div class="note">未設定の場合は「ローカル記録」だけ読み込めます（このブラウザで、シミュレーターと同じドメインで開いている場合のみ）。</div>
+  </div>
+
+  <div class="card">
+    <h2>📥 記録の読み込み</h2>
+    <div class="row">
+      <button class="gold" onclick="loadShared()">🌐 共有データを読み込み</button>
+      <button onclick="loadLocal()">💾 ローカル記録を読み込み</button>
+      <label>シード絞り込み:</label><input type="text" id="seed-filter" style="width:140px" placeholder="例: ABC123" oninput="renderRecords()">
+      <button onclick="exportJson()">⬇ JSONエクスポート</button>
+      <span class="note" id="rec-status">未読み込み</span>
+    </div>
+    <div style="overflow-x:auto">
+      <table id="rec-table">
+        <thead><tr><th>日時</th><th>シード</th><th>ユーザー</th><th>種別</th><th>オーグメント</th><th>盤面</th><th>ベンチ</th><th>完成アイテム</th><th></th></tr></thead>
+        <tbody id="rec-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card" id="agg-card" style="display:none">
+    <h2>📈 シード集計 <span id="agg-title" style="color:#fff"></span></h2>
+    <div class="grid2">
+      <div><h2 style="font-size:12px">✨ オーグメント取得率</h2><div id="agg-augs"></div></div>
+      <div><h2 style="font-size:12px">♟️ 盤面チャンピオン率（★別）</h2><div id="agg-board"></div></div>
+      <div><h2 style="font-size:12px">🪑 ベンチのコマ（★別）</h2><div id="agg-bench"></div></div>
+      <div><h2 style="font-size:12px">🗡️ 盤面の完成アイテム</h2><div id="agg-items"></div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════ 🦸 チャンピオン ══════════ -->
+<div class="page" id="page-champs">
+  <div class="card">
+    <h2>📂 data-champions.js を読み込んで編集 → ダウンロード</h2>
+    <div class="row">
+      <input type="file" id="champ-file" accept=".js">
+      <button class="gold" onclick="downloadChamps()" id="champ-dl" disabled>⬇ 編集後のファイルをダウンロード</button>
+    </div>
+    <div class="note">効果・特性データはそのまま保持し、<b>日本語名とコスト</b>だけを書き換えます（テキスト保存型パッチ）。</div>
+  </div>
+  <div class="card">
+    <table><thead><tr><th></th><th>ID</th><th>英名</th><th>日本語名</th><th>コスト</th><th>特性</th></tr></thead>
+    <tbody id="champ-body"><tr><td colspan="6" class="note">ファイルを読み込んでください</td></tr></tbody></table>
+  </div>
+</div>
+
+<!-- ══════════ ✨ オーグメント ══════════ -->
+<div class="page" id="page-augs">
+  <div class="card">
+    <h2>📂 data-augments.js を読み込んで編集 → ダウンロード</h2>
+    <div class="row">
+      <input type="file" id="aug-file" accept=".js">
+      <label>ティア:</label><select id="aug-tier-filter" onchange="renderAugs()"><option value="all">全て</option><option value="silver">シルバー</option><option value="gold">ゴールド</option><option value="prismatic">プリズム</option></select>
+      <label>検索:</label><input type="text" id="aug-search" style="width:150px" oninput="renderAugs()">
+      <button class="gold" onclick="downloadAugs()" id="aug-dl" disabled>⬇ 編集後のファイルをダウンロード</button>
+    </div>
+    <div class="note">効果関数（effect）とJSXは<b>一切触らず</b>、<b>名前・説明文・ティア</b>だけをテキスト置換で書き換えます。パッチ変更のたびに使ってください。</div>
+  </div>
+  <div id="aug-list"></div>
+</div>
+
+<div class="msg" id="msg"></div>
+
+<script>
+/* ═══════ 共通 ═══════ */
+function showMsg(t, err) {
+  const m = document.getElementById('msg');
+  m.textContent = t; m.style.display = 'block';
+  m.style.background = err ? '#5e1616' : '#164a2a';
+  m.style.borderColor = err ? '#dc3545' : '#2fbf71';
+  m.style.color = err ? '#ffc6c6' : '#c6f2d8';
+  clearTimeout(showMsg._t); showMsg._t = setTimeout(() => m.style.display = 'none', 3000);
+}
+document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
+  document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+  document.querySelectorAll('.page').forEach(x => x.classList.remove('active'));
+  t.classList.add('active');
+  document.getElementById('page-' + t.dataset.page).classList.add('active');
+});
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const champIcon = img => img ? `https://cdn.metatft.com/cdn-cgi/image/width=64,format=webp/file/metatft/champions/tft17_${img.toLowerCase()}.png` : '';
+
+/* ═══════ 📊 記録データ ═══════ */
+const FB_CFG_KEY = 'sim_editor_fb_cfg';
+let records = [];   // {docName?, seed, ts, user, cheat, data}
+(function initFb(){
+  try { const c = JSON.parse(localStorage.getItem(FB_CFG_KEY) || '{}');
+    if (c.apiKey) document.getElementById('fb-key').value = c.apiKey;
+    if (c.projectId) document.getElementById('fb-pid').value = c.projectId;
+    if (c.collection) document.getElementById('fb-col').value = c.collection;
+  } catch(e){}
+})();
+function fbCfg() {
+  return { apiKey: document.getElementById('fb-key').value.trim(),
+           projectId: document.getElementById('fb-pid').value.trim(),
+           collection: document.getElementById('fb-col').value.trim() || 'sim_seed_stats' };
+}
+function saveFbCfg() { localStorage.setItem(FB_CFG_KEY, JSON.stringify(fbCfg())); showMsg('接続設定を保存しました'); }
+
+async function loadShared() {
+  const c = fbCfg();
+  if (!c.apiKey || !c.projectId) return showMsg('apiKey と projectId を入力してください', true);
+  document.getElementById('rec-status').textContent = '読み込み中…';
+  try {
+    const url = `https://firestore.googleapis.com/v1/projects/${c.projectId}/databases/(default)/documents:runQuery?key=${c.apiKey}`;
+    const q = { structuredQuery: { from: [{ collectionId: c.collection }], orderBy: [{ field: { fieldPath: 'ts' }, direction: 'DESCENDING' }], limit: 1000 } };
+    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(q) });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const rows = await res.json();
+    records = (Array.isArray(rows) ? rows : []).filter(r => r.document && r.document.fields).map(r => {
+      const f = r.document.fields; let data = {};
+      try { data = JSON.parse((f.data && f.data.stringValue) || '{}'); } catch(e){}
+      return { docName: r.document.name, seed: f.seed?.stringValue || '', ts: Number(f.ts?.integerValue || 0),
+               user: f.user?.stringValue || '名無し', cheat: !!(f.cheat && f.cheat.booleanValue), data, src: '🌐' };
+    });
+    document.getElementById('rec-status').textContent = `🌐 共有 ${records.length} 件`;
+    renderRecords();
+  } catch(e) { document.getElementById('rec-status').textContent = '失敗'; showMsg('読み込み失敗: ' + e.message, true); }
+}
+function loadLocal() {
+  try {
+    const arr = JSON.parse(localStorage.getItem('tft_sim_seed_stats_v1') || '[]');
+    records = arr.map(r => ({ ...r, src: '💾' })).sort((a,b) => b.ts - a.ts);
+    document.getElementById('rec-status').textContent = `💾 ローカル ${records.length} 件`;
+    renderRecords();
+  } catch(e) { showMsg('ローカル記録の読み込みに失敗', true); }
+}
+async function deleteRecord(i) {
+  const r = records[i];
+  if (!r) return;
+  if (!confirm(`この記録を削除しますか？\n${r.seed} / ${r.user}`)) return;
+  if (r.docName) {
+    try {
+      const c = fbCfg();
+      const res = await fetch(`https://firestore.googleapis.com/v1/${r.docName}?key=${c.apiKey}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+    } catch(e) { return showMsg('削除失敗（Firestoreルールでdeleteが許可されているか確認）: ' + e.message, true); }
+  } else {
+    // ローカル記録から該当1件を削除
+    try {
+      const arr = JSON.parse(localStorage.getItem('tft_sim_seed_stats_v1') || '[]');
+      const k = arr.findIndex(x => x.ts === r.ts && x.seed === r.seed);
+      if (k !== -1) { arr.splice(k, 1); localStorage.setItem('tft_sim_seed_stats_v1', JSON.stringify(arr)); }
+    } catch(e){}
+  }
+  records.splice(i, 1); renderRecords(); showMsg('削除しました');
+}
+function fmtUnits(list) { return (list || []).map(u => `<span class="pill">${esc(u.jaName)}${'★'.repeat(u.star || 1)}</span>`).join(''); }
+function renderRecords() {
+  const filter = document.getElementById('seed-filter').value.trim().toUpperCase();
+  const view = filter ? records.filter(r => (r.seed || '').toUpperCase().includes(filter)) : records;
+  const body = document.getElementById('rec-body');
+  body.innerHTML = view.length === 0 ? '<tr><td colspan="9" class="note">記録がありません</td></tr>' :
+    view.map(r => {
+      const gi = records.indexOf(r);
+      const d = r.data || {};
+      return `<tr>
+        <td style="white-space:nowrap">${new Date(r.ts).toLocaleString('ja-JP')}</td>
+        <td style="font-family:Rajdhani;font-weight:700;color:#7fd0ff">${esc(r.seed)} <span style="opacity:.5">${r.src||''}</span></td>
+        <td>${esc(r.user)}</td>
+        <td>${r.cheat ? '<span class="badge cheat">チート</span>' : '<span class="badge clean">通常</span>'}</td>
+        <td>${(d.augments||[]).map(a=>`<span class="pill tier-${esc(a.tier)}">${esc(a.name)}</span>`).join('')}</td>
+        <td>${fmtUnits(d.board)}</td>
+        <td>${fmtUnits(d.bench)}</td>
+        <td>${(d.items||[]).map(n=>`<span class="pill">${esc(n)}</span>`).join('')}</td>
+        <td><button class="danger" style="padding:4px 9px;font-size:11px" onclick="deleteRecord(${gi})">削除</button></td>
+      </tr>`;
+    }).join('');
+  renderAgg(filter, view);
+}
+function renderAgg(filter, view) {
+  const card = document.getElementById('agg-card');
+  if (!filter || view.length === 0) { card.style.display = 'none'; return; }
+  card.style.display = 'block';
+  document.getElementById('agg-title').textContent = `— ${filter}（${view.length}回）`;
+  const n = view.length;
+  const bump = (m,k,meta) => { const c = m.get(k) || { count:0, ...meta }; c.count++; m.set(k,c); };
+  const augM = new Map(), boM = new Map(), beM = new Map(), itM = new Map();
+  view.forEach(r => {
+    const d = r.data || {};
+    new Set((d.augments||[]).map(a=>a.name+'\u0001'+(a.tier||''))).forEach(k=>{const[name,tier]=k.split('\u0001');bump(augM,name,{name,tier});});
+    new Set((d.board||[]).map(u=>u.id+'\u0001'+u.star+'\u0001'+u.jaName)).forEach(k=>{const[id,star,jaName]=k.split('\u0001');bump(boM,id+'_'+star,{jaName,star:+star});});
+    new Set((d.bench||[]).map(u=>u.id+'\u0001'+u.star+'\u0001'+u.jaName)).forEach(k=>{const[id,star,jaName]=k.split('\u0001');bump(beM,id+'_'+star,{jaName,star:+star});});
+    new Set(d.items||[]).forEach(name=>bump(itM,name,{name}));
+  });
+  const bar = (label, count, cls) => `<div class="pct-bar"><div class="pct-fill" style="width:${Math.round(count/n*100)}%"></div><div class="pct-label ${cls||''}">${label}</div><div class="pct-val">${Math.round(count/n*100)}% (${count}/${n})</div></div>`;
+  const put = (id, map, fmt) => { document.getElementById(id).innerHTML = [...map.values()].sort((a,b)=>b.count-a.count).map(fmt).join('') || '<div class="note">データなし</div>'; };
+  put('agg-augs', augM, v => bar(esc(v.name), v.count, 'tier-'+v.tier));
+  put('agg-board', boM, v => bar(esc(v.jaName)+'★'.repeat(v.star), v.count));
+  put('agg-bench', beM, v => bar(esc(v.jaName)+'★'.repeat(v.star), v.count));
+  put('agg-items', itM, v => bar(esc(v.name), v.count));
+}
+function exportJson() {
+  if (!records.length) return showMsg('先に記録を読み込んでください', true);
+  const blob = new Blob([JSON.stringify(records, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = `sim_seed_stats_${Date.now()}.json`; a.click();
+}
+
+/* ═══════ 🦸 チャンピオン（テキスト保存型パッチ） ═══════ */
+let champText = null, champEntries = [];
+document.getElementById('champ-file').addEventListener('change', async e => {
+  const f = e.target.files[0]; if (!f) return;
+  champText = await f.text();
+  champEntries = [];
+  // CHAMPS 配列内の1行1エントリをパース（元テキストの位置を保持）
+  const re = /\{id:\s*'([^']+)',\s*name:\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'),\s*jaName:\s*'((?:[^'\\]|\\.)*)',\s*cost:\s*(\d+),\s*traits:\s*(\[[^\]]*\]),\s*img:\s*'([^']*)'/g;
+  let m;
+  while ((m = re.exec(champText)) !== null) {
+    champEntries.push({ full: m[0], id: m[1], name: m[2], jaName: m[3], cost: m[4], traits: m[5], img: m[6],
+                        newJa: m[3], newCost: m[4] });
+  }
+  if (!champEntries.length) { showMsg('CHAMPS のエントリが見つかりませんでした', true); return; }
+  document.getElementById('champ-dl').disabled = false;
+  renderChamps(); showMsg(`${champEntries.length} 体を読み込みました`);
+});
+function renderChamps() {
+  document.getElementById('champ-body').innerHTML = champEntries.map((c, i) => `<tr>
+    <td><img class="champ-img" src="${champIcon(c.img)}" onerror="this.style.opacity=.15"></td>
+    <td style="font-family:Rajdhani;color:#7fd0ff">${esc(c.id)}</td>
+    <td>${esc(c.name.slice(1,-1))}</td>
+    <td><input type="text" value="${esc(c.newJa)}" style="width:160px" oninput="champEntries[${i}].newJa=this.value"></td>
+    <td><input type="number" min="1" max="5" value="${c.newCost}" style="width:56px" oninput="champEntries[${i}].newCost=this.value"></td>
+    <td class="note">${esc(c.traits)}</td>
+  </tr>`).join('');
+}
+function downloadChamps() {
+  if (champText == null) return;
+  let out = champText;
+  champEntries.forEach(c => {
+    if (c.newJa === c.jaName && c.newCost === c.cost) return;
+    const patched = c.full
+      .replace(`jaName:'${c.jaName}'`, `jaName:'${c.newJa.replace(/'/g, "\\'")}'`)
+      .replace(new RegExp(`cost:\\s*${c.cost}\\b`), `cost:${c.newCost}`);
+    out = out.replace(c.full, patched);
+  });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([out], { type: 'text/javascript' }));
+  a.download = 'data-champions.js'; a.click();
+  showMsg('data-champions.js をダウンロードしました');
+}
+
+/* ═══════ ✨ オーグメント（効果関数を保持したままテキストパッチ） ═══════ */
+let augText = null, augEntries = [];
+document.getElementById('aug-file').addEventListener('change', async e => {
+  const f = e.target.files[0]; if (!f) return;
+  augText = await f.text();
+  augEntries = [];
+  // id: 'x' の出現位置でエントリ境界を検出し、各セグメント内から name/tier/desc を抽出
+  const idRe = /id:\s*'([^']+)'/g;
+  const marks = []; let m;
+  while ((m = idRe.exec(augText)) !== null) marks.push({ id: m[1], pos: m.index });
+  for (let i = 0; i < marks.length; i++) {
+    const start = marks[i].pos;
+    const end = i + 1 < marks.length ? marks[i + 1].pos : augText.length;
+    const seg = augText.slice(start, end);
+    const name = (seg.match(/name:\s*'((?:[^'\\]|\\.)*)'/) || [])[1];
+    const tier = (seg.match(/tier:\s*'(silver|gold|prismatic)'/) || [])[1];
+    const desc = (seg.match(/desc:\s*'((?:[^'\\]|\\.)*)'/) || [])[1];
+    if (name == null || tier == null) continue;  // オーグメント以外のid（内部データ等）はスキップ
+    augEntries.push({ id: marks[i].id, start, end, name, tier, desc: desc ?? '',
+                      newName: name, newTier: tier, newDesc: desc ?? '' });
+  }
+  if (!augEntries.length) { showMsg('オーグメントのエントリが見つかりませんでした', true); return; }
+  document.getElementById('aug-dl').disabled = false;
+  renderAugs(); showMsg(`${augEntries.length} 個のオーグメントを読み込みました`);
+});
+function renderAugs() {
+  if (augText == null) { document.getElementById('aug-list').innerHTML = '<div class="card note">ファイルを読み込んでください</div>'; return; }
+  const tf = document.getElementById('aug-tier-filter').value;
+  const q = document.getElementById('aug-search').value.trim().toLowerCase();
+  const tierJa = { silver: 'シルバー', gold: 'ゴールド', prismatic: 'プリズム' };
+  document.getElementById('aug-list').innerHTML = augEntries.map((a, i) => {
+    if (tf !== 'all' && a.newTier !== tf) return '';
+    if (q && !a.newName.toLowerCase().includes(q) && !a.id.toLowerCase().includes(q)) return '';
+    return `<div class="card">
+      <div class="row">
+        <span style="font-family:Rajdhani;color:#7fd0ff;font-size:12px;min-width:130px">${esc(a.id)}</span>
+        <input type="text" value="${esc(a.newName)}" style="width:220px;font-weight:900" oninput="augEntries[${i}].newName=this.value">
+        <select onchange="augEntries[${i}].newTier=this.value;renderAugs()">
+          ${['silver','gold','prismatic'].map(t => `<option value="${t}" ${a.newTier===t?'selected':''}>${tierJa[t]}</option>`).join('')}
+        </select>
+        ${(a.newName!==a.name||a.newTier!==a.tier||a.newDesc!==a.desc)?'<span class="badge" style="background:#5e4a16;color:#ffe08a">変更あり</span>':''}
+      </div>
+      <textarea oninput="augEntries[${i}].newDesc=this.value">${esc(a.newDesc)}</textarea>
+    </div>`;
+  }).join('') || '<div class="card note">該当なし</div>';
+}
+function downloadAugs() {
+  if (augText == null) return;
+  // 後ろのエントリから順にセグメント単位で置換（位置ズレ防止）
+  let out = augText;
+  const sorted = [...augEntries].sort((a, b) => b.start - a.start);
+  for (const a of sorted) {
+    if (a.newName === a.name && a.newTier === a.tier && a.newDesc === a.desc) continue;
+    let seg = out.slice(a.start, a.end);
+    const escQ = s => s.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    if (a.newName !== a.name) seg = seg.replace(`name: '${a.name}'`, `name: '${escQ(a.newName)}'`).replace(`name:'${a.name}'`, `name:'${escQ(a.newName)}'`);
+    if (a.newTier !== a.tier) seg = seg.replace(`tier: '${a.tier}'`, `tier: '${a.newTier}'`).replace(`tier:'${a.tier}'`, `tier:'${a.newTier}'`);
+    if (a.newDesc !== a.desc && a.desc) seg = seg.replace(`desc: '${a.desc}'`, `desc: '${escQ(a.newDesc)}'`).replace(`desc:'${a.desc}'`, `desc:'${escQ(a.newDesc)}'`);
+    out = out.slice(0, a.start) + seg + out.slice(a.end);
+  }
+  const a2 = document.createElement('a');
+  a2.href = URL.createObjectURL(new Blob([out], { type: 'text/javascript' }));
+  a2.download = 'data-augments.js'; a2.click();
+  showMsg('data-augments.js をダウンロードしました');
+}
+renderAugs();
+</script>
+</body>
+</html>
