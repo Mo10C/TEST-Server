@@ -66,6 +66,8 @@ textarea{width:100%;min-height:56px;resize:vertical;line-height:1.5}
   <div class="tab active" data-page="records">📊 記録データ</div>
   <div class="tab" data-page="champs">🦸 チャンピオン</div>
   <div class="tab" data-page="augs">✨ オーグメント</div>
+  <div class="tab" data-page="users">👥 ユーザー</div>
+  <div class="tab" data-page="perms">🛡️ 権限・注目</div>
 </div>
 
 <!-- ══════════ 📊 記録データ ══════════ -->
@@ -140,23 +142,69 @@ textarea{width:100%;min-height:56px;resize:vertical;line-height:1.5}
   <div id="aug-list"></div>
 </div>
 
+<!-- ══════════ 👥 ユーザー ══════════ -->
+<div class="page" id="page-users">
+  <div class="card">
+    <h2>👥 連携ユーザー一覧（Riot＋Discord 両方の連携が成立した人）</h2>
+    <div class="row">
+      <button class="gold" onclick="loadUsers()">🌐 読み込み</button>
+      <span class="note" id="users-status">未読み込み</span>
+    </div>
+    <table><thead><tr><th></th><th>Discord名</th><th>Riot ID</th><th>ランク</th><th>更新日時</th><th></th></tr></thead>
+    <tbody id="users-body"><tr><td colspan="6" class="note">「読み込み」を押してください</td></tr></tbody></table>
+  </div>
+</div>
+
+<!-- ══════════ 🛡️ 権限・注目 ══════════ -->
+<div class="page" id="page-perms">
+  <div class="card">
+    <h2>🛡️ 管理者リスト（Firestore: sim_meta/admins）</h2>
+    <div class="note" style="margin-bottom:8px">ここに追加した人は、アカウント連携するとエディタに入れるようになります。sim-config.js の admins（Mo10C#819）はここと別で常に有効です。</div>
+    <div id="admins-editor"></div>
+  </div>
+  <div class="card">
+    <h2>⭐ 注目プレイヤー（Firestore: sim_meta/featured）</h2>
+    <div class="note" style="margin-bottom:8px">チャレンジャーに加え、ここに追加した人の記録が「みんなの結果」に「○○の盤面」として表示されます。</div>
+    <div id="featured-editor"></div>
+  </div>
+  <div class="row">
+    <button class="gold" onclick="loadPerms()">🌐 読み込み</button>
+    <button onclick="savePerms()" id="perms-save" disabled>💾 保存（Firestoreへ反映）</button>
+    <span class="note" id="perms-status">未読み込み</span>
+  </div>
+</div>
+
 <div class="msg" id="msg"></div>
 
 <script>
 /* ═══════ 管理者ゲート ═══════
    アカウント連携（シミュレーター側）で管理者と判定された人以外には編集画面を隠す。
    ※ 静的ホスティングのためあくまで「表示のガード」。データの実protectionはFirestoreルールが担う。 */
-(function adminGate(){
+(async function adminGate(){
   const CFG = window.SIM_CONFIG || {};
-  const ad = CFG.admins || { riotIds: [], discordIds: [] };
   let acct = null;
   try { acct = JSON.parse(localStorage.getItem('tft_sim_account_v1') || 'null'); } catch(e){}
-  const rid = acct && acct.riot && acct.riot.riotId ? acct.riot.riotId.toLowerCase() : null;
-  const did = acct && acct.discord ? acct.discord.id : null;
-  const ok = (rid && (ad.riotIds || []).some(x => (x || '').toLowerCase() === rid)) ||
-             (did && (ad.discordIds || []).includes(did));
+  // 🌟 連携は Riot と Discord の両方が揃って初めて成立
+  const complete = !!(acct && acct.riot && acct.discord);
+  const rid = complete ? acct.riot.riotId.toLowerCase() : null;
+  const did = complete ? acct.discord.id : null;
+  const match = (ad) => !!(ad && (
+    (rid && (ad.riotIds || []).some(x => (x || '').toLowerCase() === rid)) ||
+    (did && (ad.discordIds || []).includes(did))));
+  let ok = complete && match(CFG.admins);
+  // configで不一致なら Firestore(sim_meta/admins) 側も確認（管理者が付与した権限）
+  if (!ok && complete && CFG.firebase && CFG.firebase.apiKey && CFG.firebase.projectId) {
+    try {
+      const r = await fetch(`https://firestore.googleapis.com/v1/projects/${CFG.firebase.projectId}/databases/(default)/documents/sim_meta/admins?key=${CFG.firebase.apiKey}`);
+      if (r.ok) {
+        const j = await r.json();
+        const arr = (f) => ((j.fields && j.fields[f] && j.fields[f].arrayValue && j.fields[f].arrayValue.values) || []).map(v => v.stringValue);
+        ok = match({ riotIds: arr('riotIds'), discordIds: arr('discordIds') });
+      }
+    } catch(e){}
+  }
   if (!ok) {
-    document.body.innerHTML = '<div style="height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;font-family:Noto Sans JP,sans-serif;background:#f0f4f8;color:#1e293b"><div style="font-size:40px">🔒</div><div style="font-size:16px;font-weight:900">このページは管理者専用です</div><div style="font-size:12px;color:#64748b">シミュレーターの「👤 アカウント連携」で管理者アカウントを連携してください</div><a href="index.html" style="margin-top:8px"><button style="background:#0066cc;border:1px solid #0066cc;color:#fff;border-radius:8px;padding:10px 20px;font-size:13px;font-weight:900;cursor:pointer;font-family:Noto Sans JP">← シミュレーターへ</button></a></div>';
+    document.body.innerHTML = '<div style="height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;font-family:Noto Sans JP,sans-serif;background:#f0f4f8;color:#1e293b"><div style="font-size:40px">🔒</div><div style="font-size:16px;font-weight:900">このページは管理者専用です</div><div style="font-size:12px;color:#64748b">シミュレーターの「👤 アカウント連携」で Riot ID と Discord の両方を連携した管理者のみ入れます</div><a href="index.html" style="margin-top:8px"><button style="background:#0066cc;border:1px solid #0066cc;color:#fff;border-radius:8px;padding:10px 20px;font-size:13px;font-weight:900;cursor:pointer;font-family:Noto Sans JP">← シミュレーターへ</button></a></div>';
     throw new Error('admin only');
   }
 })();
@@ -271,6 +319,7 @@ function renderRecords() {
       </tr>`;
     }).join('');
   renderAgg(filter, view);
+  renderSeedChips();
 }
 function renderAgg(filter, view) {
   const card = document.getElementById('agg-card');
@@ -410,6 +459,133 @@ function downloadAugs() {
   showMsg('data-augments.js をダウンロードしました');
 }
 renderAugs();
+
+/* ═══════ 👥 ユーザー一覧（sim_users） ═══════ */
+const RANK_JA2 = { IRON:'アイアン', BRONZE:'ブロンズ', SILVER:'シルバー', GOLD:'ゴールド', PLATINUM:'プラチナ', EMERALD:'エメラルド', DIAMOND:'ダイヤモンド', MASTER:'マスター', GRANDMASTER:'グランドマスター', CHALLENGER:'チャレンジャー' };
+let simUsers = [];
+async function loadUsers() {
+  const c = fbCfg();
+  if (!c.apiKey || !c.projectId) return showMsg('Firebase設定を確認してください', true);
+  document.getElementById('users-status').textContent = '読み込み中…';
+  try {
+    const res = await fetch(`https://firestore.googleapis.com/v1/projects/${c.projectId}/databases/(default)/documents/sim_users?pageSize=300&key=${c.apiKey}`);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const j = await res.json();
+    simUsers = (j.documents || []).map(d => {
+      const f = d.fields || {};
+      const g = (k) => (f[k] && (f[k].stringValue ?? f[k].integerValue)) || '';
+      return { docName: d.name, riotId: g('riotId'), gameName: g('gameName'), tier: g('tier'), rank: g('rank'),
+               lp: Number(g('lp') || 0), discordId: g('discordId'), discordName: g('discordName'),
+               avatar: g('avatar'), updatedAt: Number(g('updatedAt') || 0) };
+    }).sort((a, b) => b.updatedAt - a.updatedAt);
+    document.getElementById('users-status').textContent = `${simUsers.length} 人`;
+    renderUsers();
+  } catch(e) { document.getElementById('users-status').textContent = '失敗'; showMsg('読み込み失敗: ' + e.message, true); }
+}
+function renderUsers() {
+  document.getElementById('users-body').innerHTML = simUsers.length === 0 ? '<tr><td colspan="6" class="note">ユーザーがいません</td></tr>' :
+    simUsers.map((u, i) => `<tr>
+      <td>${u.avatar ? `<img src="${esc(u.avatar)}" style="width:28px;height:28px;border-radius:50%">` : '👤'}</td>
+      <td style="font-weight:900">${esc(u.discordName)} <span class="note">(${esc(u.discordId)})</span></td>
+      <td style="font-family:Rajdhani;color:var(--blue);font-weight:700">${esc(u.riotId)}</td>
+      <td>${u.tier ? `${RANK_JA2[u.tier] || esc(u.tier)} ${esc(u.rank)} ${u.lp}LP` : '<span class="note">なし</span>'}</td>
+      <td class="note">${u.updatedAt ? new Date(u.updatedAt).toLocaleString('ja-JP') : ''}</td>
+      <td><button class="danger" style="padding:4px 9px;font-size:11px" onclick="deleteUser(${i})">削除</button></td>
+    </tr>`).join('');
+}
+async function deleteUser(i) {
+  const u = simUsers[i]; if (!u) return;
+  if (!confirm(`${u.discordName}（${u.riotId}）のユーザー情報を削除しますか？`)) return;
+  try {
+    const c = fbCfg();
+    const res = await fetch(`https://firestore.googleapis.com/v1/${u.docName}?key=${c.apiKey}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    simUsers.splice(i, 1); renderUsers(); showMsg('削除しました');
+  } catch(e) { showMsg('削除失敗: ' + e.message, true); }
+}
+
+/* ═══════ 🛡️ 権限・注目プレイヤー管理（sim_meta） ═══════ */
+let perms = { admins: { riotIds: [], discordIds: [] }, featured: { riotIds: [], discordIds: [] } };
+async function loadPerms() {
+  const c = fbCfg();
+  if (!c.apiKey || !c.projectId) return showMsg('Firebase設定を確認してください', true);
+  document.getElementById('perms-status').textContent = '読み込み中…';
+  const getDoc = async (name) => {
+    try {
+      const r = await fetch(`https://firestore.googleapis.com/v1/projects/${c.projectId}/databases/(default)/documents/sim_meta/${name}?key=${c.apiKey}`);
+      if (!r.ok) return { riotIds: [], discordIds: [] };
+      const j = await r.json();
+      const arr = (f) => ((j.fields && j.fields[f] && j.fields[f].arrayValue && j.fields[f].arrayValue.values) || []).map(v => v.stringValue).filter(Boolean);
+      return { riotIds: arr('riotIds'), discordIds: arr('discordIds') };
+    } catch(e) { return { riotIds: [], discordIds: [] }; }
+  };
+  perms.admins = await getDoc('admins');
+  perms.featured = await getDoc('featured');
+  document.getElementById('perms-save').disabled = false;
+  document.getElementById('perms-status').textContent = '読み込み完了';
+  renderPerms();
+}
+function renderPerms() {
+  const box = (docKey, listKey, label, placeholder) => {
+    const items = perms[docKey][listKey];
+    return `<div style="margin-bottom:10px">
+      <div style="font-size:11.5px;font-weight:700;color:var(--textdim);margin-bottom:5px">${label}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:6px">
+        ${items.map((v, i) => `<span class="pill" style="display:inline-flex;align-items:center;gap:5px;padding:4px 8px">${esc(v)}<b style="cursor:pointer;color:var(--red)" onclick="perms['${docKey}']['${listKey}'].splice(${i},1);renderPerms()">✕</b></span>`).join('') || '<span class="note">なし</span>'}
+      </div>
+      <div style="display:flex;gap:6px">
+        <input type="text" id="in-${docKey}-${listKey}" placeholder="${placeholder}" style="flex:1;max-width:280px"
+          onkeydown="if(event.key==='Enter')addPerm('${docKey}','${listKey}')">
+        <button onclick="addPerm('${docKey}','${listKey}')" style="padding:6px 12px;font-size:12px">＋追加</button>
+      </div>
+    </div>`;
+  };
+  document.getElementById('admins-editor').innerHTML =
+    box('admins', 'riotIds', 'Riot ID で指定', '例: Name#JP1') + box('admins', 'discordIds', 'Discord ID で指定', '例: 123456789012345678');
+  document.getElementById('featured-editor').innerHTML =
+    box('featured', 'riotIds', 'Riot ID で指定', '例: Name#JP1') + box('featured', 'discordIds', 'Discord ID で指定', '例: 123456789012345678');
+}
+function addPerm(docKey, listKey) {
+  const el = document.getElementById(`in-${docKey}-${listKey}`);
+  const v = el.value.trim();
+  if (!v) return;
+  if (!perms[docKey][listKey].includes(v)) perms[docKey][listKey].push(v);
+  el.value = ''; renderPerms();
+}
+async function savePerms() {
+  const c = fbCfg();
+  const put = async (name, data) => {
+    const url = `https://firestore.googleapis.com/v1/projects/${c.projectId}/databases/(default)/documents/sim_meta/${name}?key=${c.apiKey}`;
+    const toArr = (a) => ({ arrayValue: { values: a.map(v => ({ stringValue: v })) } });
+    const res = await fetch(url, { method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fields: { riotIds: toArr(data.riotIds), discordIds: toArr(data.discordIds) } }) });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+  };
+  try {
+    await put('admins', perms.admins);
+    await put('featured', perms.featured);
+    showMsg('保存しました（次回のアクセスから反映されます）');
+  } catch(e) { showMsg('保存失敗（Firestoreルールで sim_meta の write が許可されているか確認）: ' + e.message, true); }
+}
+
+/* ═══════ 📊 シード一覧チップ（記録タブ強化） ═══════ */
+function renderSeedChips() {
+  let bar = document.getElementById('seed-chips');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'seed-chips';
+    bar.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin:8px 0';
+    const table = document.getElementById('rec-table');
+    table.parentElement.insertBefore(bar, table);
+  }
+  const counts = new Map();
+  records.forEach(r => { if (r.seed) counts.set(r.seed, (counts.get(r.seed) || 0) + 1); });
+  const cur = document.getElementById('seed-filter').value.trim().toUpperCase();
+  bar.innerHTML = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([seed, n]) =>
+    `<span class="pill" style="cursor:pointer;padding:5px 10px;font-weight:900;${cur === seed ? 'background:#fdf3d7;border:1px solid var(--gold);color:var(--gold)' : ''}"
+      onclick="document.getElementById('seed-filter').value='${esc(seed)}';renderRecords()">${esc(seed)} <span style="opacity:.6">×${n}</span></span>`).join('')
+    + (cur ? ` <span class="pill" style="cursor:pointer;padding:5px 10px" onclick="document.getElementById('seed-filter').value='';renderRecords()">✕ 絞り込み解除</span>` : '');
+}
 </script>
 </body>
 </html>

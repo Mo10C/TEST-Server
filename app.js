@@ -134,14 +134,70 @@ const ACCOUNT_KEY = 'tft_sim_account_v1';
 const loadAccount = () => { try { return JSON.parse(localStorage.getItem(ACCOUNT_KEY) || 'null'); } catch (e) { return null; } };
 const saveAccount = (a) => { try { a ? localStorage.setItem(ACCOUNT_KEY, JSON.stringify(a)) : localStorage.removeItem(ACCOUNT_KEY); } catch (e) {} };
 const RANK_JA = { IRON:'アイアン', BRONZE:'ブロンズ', SILVER:'シルバー', GOLD:'ゴールド', PLATINUM:'プラチナ', EMERALD:'エメラルド', DIAMOND:'ダイヤモンド', MASTER:'マスター', GRANDMASTER:'グランドマスター', CHALLENGER:'チャレンジャー' };
-// 管理者判定：sim-config.js の admins に Riot ID または Discord ID が含まれるか
-const isAdminAccount = (acct) => {
-  const ad = SIM_CFG.admins || { riotIds: ['Mo10C#819'], discordIds: [] };
-  const rid = acct && acct.riot && acct.riot.riotId ? acct.riot.riotId.toLowerCase() : null;
-  const did = acct && acct.discord ? acct.discord.id : null;
-  return !!((rid && (ad.riotIds || []).some(x => (x || '').toLowerCase() === rid)) ||
-            (did && (ad.discordIds || []).includes(did)));
+// 🏆 注目プレイヤー判定：sim-config.js の featured ＋ Firestore(sim_meta/featured) のどちらかに含まれるか
+const isFeaturedPlayer = (p, remote = null) => {
+  if (!p) return false;
+  const lists = [SIM_CFG.featured || { riotIds: [], discordIds: [] }];
+  if (remote) lists.push(remote);
+  const rid = p.riotId ? p.riotId.toLowerCase() : null;
+  return lists.some(f =>
+    (rid && (f.riotIds || []).some(x => (x || '').toLowerCase() === rid)) ||
+    (p.discordId && (f.discordIds || []).includes(p.discordId)));
 };
+
+// 🌟 連携は Riot ID と Discord の両方を入力して初めて「成立」する
+const accountComplete = (a) => !!(a && a.riot && a.discord);
+// 管理者判定：連携成立が前提。sim-config.js の admins ＋ Firestore(sim_meta/admins) の両方を見る
+const isAdminAccount = (acct, remote = null) => {
+  if (!accountComplete(acct)) return false;
+  const lists = [SIM_CFG.admins || { riotIds: ['Mo10C#819'], discordIds: [] }];
+  if (remote) lists.push(remote);
+  const rid = acct.riot.riotId.toLowerCase();
+  const did = acct.discord.id;
+  return lists.some(ad =>
+    ((ad.riotIds || []).some(x => (x || '').toLowerCase() === rid)) ||
+    ((ad.discordIds || []).includes(did)));
+};
+
+// 🌟 メタ情報（管理者リスト・注目プレイヤーリスト）を Firestore から取得
+//    sim_meta/admins, sim_meta/featured の2ドキュメント（editorから編集する）
+async function fetchSimMeta() {
+  const empty = { admins: { riotIds: [], discordIds: [] }, featured: { riotIds: [], discordIds: [] } };
+  if (!seedStatsShared()) return empty;
+  const base = `https://firestore.googleapis.com/v1/projects/${SEED_STATS_CONFIG.projectId}/databases/(default)/documents/sim_meta`;
+  const getDoc = async (name) => {
+    try {
+      const r = await fetch(`${base}/${name}?key=${SEED_STATS_CONFIG.apiKey}`);
+      if (!r.ok) return { riotIds: [], discordIds: [] };
+      const j = await r.json();
+      const arr = (f) => ((j.fields && j.fields[f] && j.fields[f].arrayValue && j.fields[f].arrayValue.values) || []).map(v => v.stringValue).filter(Boolean);
+      return { riotIds: arr('riotIds'), discordIds: arr('discordIds') };
+    } catch (e) { return { riotIds: [], discordIds: [] }; }
+  };
+  const [admins, featured] = await Promise.all([getDoc('admins'), getDoc('featured')]);
+  return { admins, featured };
+}
+
+// 🌟 連携が成立したユーザーの情報を Firestore(sim_users) に保存（editorで一覧できる）
+async function registerSimUser(acct) {
+  if (!seedStatsShared() || !accountComplete(acct)) return;
+  try {
+    const docId = acct.discord.id;
+    const url = `https://firestore.googleapis.com/v1/projects/${SEED_STATS_CONFIG.projectId}/databases/(default)/documents/sim_users/${docId}?key=${SEED_STATS_CONFIG.apiKey}`;
+    const fields = {
+      riotId:      { stringValue: acct.riot.riotId },
+      gameName:    { stringValue: acct.riot.gameName || '' },
+      tier:        { stringValue: acct.riot.tier || '' },
+      rank:        { stringValue: acct.riot.rank || '' },
+      lp:          { integerValue: String(acct.riot.lp != null ? acct.riot.lp : 0) },
+      discordId:   { stringValue: acct.discord.id },
+      discordName: { stringValue: acct.discord.username || '' },
+      avatar:      { stringValue: acct.discord.avatarUrl || '' },
+      updatedAt:   { integerValue: String(Date.now()) },
+    };
+    await fetch(url, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields }) });
+  } catch (e) {}
+}
 
 // Riot ID 連携：Cloudflare Worker プロキシ経由で puuid とTFTランクを取得
 async function linkRiotAccount(riotIdInput) {
@@ -723,6 +779,16 @@ function AccountScreen({ account, onChangeAccount, onBack }) {
         👤 アカウント連携 {admin && <span style={{ fontSize: 13, color: '#ffd76e', letterSpacing: 1 }}>🛡️ 管理者</span>}
       </div>
 
+      {/* 連携の成立状態（RiotとDiscordの両方が必要） */}
+      <div style={{ width: 'min(560px, 94vw)', padding: '10px 14px', borderRadius: 10, fontSize: 12.5, fontWeight: 900, textAlign: 'center',
+        background: accountComplete(account) ? 'rgba(22,74,42,0.7)' : 'rgba(94,74,22,0.6)',
+        border: `1px solid ${accountComplete(account) ? '#2fbf71' : 'var(--gold2)'}`,
+        color: accountComplete(account) ? '#8fe0a8' : '#ffe08a' }}>
+        {accountComplete(account)
+          ? '✅ 連携成立（記録にあなたの名前・ランク・アイコンが付きます）'
+          : '⚠ Riot ID と Discord の両方を連携すると成立します'}
+      </div>
+
       {/* Riot ID */}
       <div style={card}>
         <div style={secT}>🎮 Riot ID（サモナーネーム・TFTランク）</div>
@@ -788,16 +854,17 @@ function SeedStatsDrawer({ seed, open, onClose }) {
   const [records, setRecords] = useState([]);
   const [sharedMode, setSharedMode] = useState(false);
   const [errMsg, setErrMsg] = useState(null);
-  const [includeCheat, setIncludeCheat] = useState(true);
+  const [featured, setFeatured] = useState({ riotIds: [], discordIds: [] }); // ⭐ Firestore側の注目プレイヤーリスト
   const [playerName, setPlayerName] = useState(getStatsPlayerName());
   const [openTopIdx, setOpenTopIdx] = useState(null); // 🏆 展開中のチャレンジャー盤面
 
   const load = async () => {
     setLoading(true); setErrMsg(null);
     try {
-      const res = await fetchSeedRecords(seed);
+      const [res, meta] = await Promise.all([fetchSeedRecords(seed), fetchSimMeta()]);
       setRecords(res.records || []);
       setSharedMode(!!res.shared);
+      setFeatured(meta.featured);
       if (res.error) setErrMsg(res.error);
     } catch (e) {
       setErrMsg(e.message);  // どんな例外でも「読み込み中…」で固まらないようにする
@@ -809,7 +876,7 @@ function SeedStatsDrawer({ seed, open, onClose }) {
 
   // 集計
   const agg = useMemo(() => {
-    const recs = includeCheat ? records : records.filter(r => !r.cheat);
+    const recs = records.filter(r => !r.cheat);  // チート記録は常に除外（新規は保存もされない）
     const n = recs.length;
     const augMap = new Map(), boardMap = new Map(), benchMap = new Map(), itemMap = new Map();
     const bump = (map, key, meta) => { const cur = map.get(key) || { count: 0, ...meta }; cur.count++; map.set(key, cur); };
@@ -828,11 +895,19 @@ function SeedStatsDrawer({ seed, open, onClose }) {
       new Set(d.items || []).forEach(name => bump(itemMap, name, { name }));
     });
     const sorted = (m) => [...m.values()].sort((a, b) => b.count - a.count);
-    // 🏆 チャレンジャーの記録（盤面をそのまま閲覧できる）
-    const topRecs = recs.filter(r => r.player && r.player.tier === 'CHALLENGER').sort((a, b) => (b.player.lp || 0) - (a.player.lp || 0));
+    // 🏆 チャレンジャー＋注目プレイヤーの記録（盤面をそのまま閲覧できる）
+    //    並び順: チャレンジャー（LP降順）→ 注目プレイヤー（新しい順）
+    const topRecs = recs
+      .filter(r => r.player && (r.player.tier === 'CHALLENGER' || isFeaturedPlayer(r.player, featured)))
+      .sort((a, b) => {
+        const ac = a.player.tier === 'CHALLENGER', bc = b.player.tier === 'CHALLENGER';
+        if (ac !== bc) return ac ? -1 : 1;
+        if (ac && bc) return (b.player.lp || 0) - (a.player.lp || 0);
+        return (b.ts || 0) - (a.ts || 0);
+      });
     return { n, cheatCount: records.filter(r => r.cheat).length,
       augs: sorted(augMap), board: sorted(boardMap), bench: sorted(benchMap), items: sorted(itemMap), topRecs };
-  }, [records, includeCheat]);
+  }, [records, featured]);
 
   const pct = (c) => agg.n ? Math.round((c / agg.n) * 100) : 0;
   const champById = (id) => (typeof CHAMPS !== 'undefined' ? CHAMPS : []).find(c => c.id === id);
@@ -872,10 +947,7 @@ function SeedStatsDrawer({ seed, open, onClose }) {
             style={{ flex: 1, minWidth: 0, padding: '6px 9px', borderRadius: 7, background: 'rgba(15,23,42,0.9)', color: '#fff', border: '1px solid var(--border)', fontSize: 11.5, fontFamily: 'Noto Sans JP' }} />
           <button onClick={load} disabled={loading} style={{ padding: '6px 10px', borderRadius: 7, background: 'rgba(0,102,204,0.5)', border: '1px solid var(--blue)', color: '#fff', fontSize: 11, fontWeight: 700, cursor: 'pointer', flexShrink: 0, opacity: loading ? 0.5 : 1 }}>🔄 更新</button>
         </div>
-        <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 10.5, color: 'rgba(255,255,255,0.65)', cursor: 'pointer' }}>
-          <input type="checkbox" checked={includeCheat} onChange={e => setIncludeCheat(e.target.checked)} style={{ accentColor: 'var(--gold2)' }} />
-          チート使用の記録を含める{agg.cheatCount > 0 ? `（${agg.cheatCount}件）` : ''}
-        </label>
+        <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.45)' }}>※ チートを使用したゲームの結果は保存・集計されません{agg.cheatCount > 0 ? `（過去のチート記録 ${agg.cheatCount} 件は除外中）` : ''}</div>
       </div>
 
       {/* 本文 */}
@@ -895,7 +967,7 @@ function SeedStatsDrawer({ seed, open, onClose }) {
 
             {agg.topRecs.length > 0 && (
               <React.Fragment>
-                {secTitle('🏆 チャレンジャーの盤面')}
+                {secTitle('🏆 注目プレイヤーの盤面')}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
                   {agg.topRecs.map((r, ti) => {
                     const p = r.player;
@@ -909,7 +981,14 @@ function SeedStatsDrawer({ seed, open, onClose }) {
                             : <span style={{ fontSize: 15 }}>🏆</span>}
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ fontSize: 12, fontWeight: 900, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name || r.user} の盤面</div>
-                            <div style={{ fontSize: 9.5, color: 'var(--gold2)', fontWeight: 700 }}>チャレンジャー {p.lp != null ? p.lp + 'LP' : ''}{r.cheat ? ' ・チート使用' : ''}</div>
+                            <div style={{ fontSize: 9.5, color: 'var(--gold2)', fontWeight: 700 }}>
+                            {p.tier === 'CHALLENGER'
+                              ? `チャレンジャー ${p.lp != null ? p.lp + 'LP' : ''}`
+                              : p.tier
+                                ? `⭐注目 ・ ${RANK_JA[p.tier] || p.tier} ${['MASTER','GRANDMASTER','CHALLENGER'].includes(p.tier) ? '' : (p.rank || '')} ${p.lp != null ? p.lp + 'LP' : ''}`
+                                : '⭐注目プレイヤー'}
+                            {r.cheat ? ' ・チート使用' : ''}
+                          </div>
                           </div>
                           <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', flexShrink: 0 }}>{isOpen ? '▲ 閉じる' : '▼ 見る'}</span>
                         </div>
@@ -2510,11 +2589,16 @@ function Main() {
   const [keyBindings, setKeyBindings] = useState(loadKeyBindings); // 🌟 キー割り当て
   const [gameOverrides, setGameOverrides] = useState(loadOverrides); // 🌟 ゲーム内設定の手動オーバーライド
   const [account, setAccount] = useState(loadAccount);              // 👤 連携アカウント
-  const changeAccount = (a) => { setAccount(a); saveAccount(a); };
+  const [remoteAdmins, setRemoteAdmins] = useState(null);       // Firestore側の管理者リスト
+  useEffect(() => { fetchSimMeta().then(m => setRemoteAdmins(m.admins)); }, []);
+  const changeAccount = (a) => {
+    setAccount(a); saveAccount(a);
+    if (accountComplete(a)) registerSimUser(a);   // 両方連携が揃った時点でユーザー情報を登録
+  };
   // Discord OAuth から戻ってきた時のトークン受け取り
   useEffect(() => {
     consumeDiscordToken().then(d => {
-      if (d) { setAccount(prev => { const next = { ...(prev || {}), discord: d }; saveAccount(next); return next; }); setView('ACCOUNT'); }
+      if (d) { setAccount(prev => { const next = { ...(prev || {}), discord: d }; saveAccount(next); if (accountComplete(next)) registerSimUser(next); return next; }); setView('ACCOUNT'); }
     });
   }, []);
 
@@ -2586,7 +2670,7 @@ function Main() {
           >
             👤 アカウント連携{account && (account.riot || account.discord) ? ' ✓' : ''}
           </button>
-          {isAdminAccount(account) && (
+          {isAdminAccount(account, remoteAdmins) && (
             <button 
               className="menu-btn" 
               style={{ width:220, background:'rgba(94,74,22,0.85)', color:'#ffd76e', borderColor:'var(--gold)', boxShadow:'0 10px 30px rgba(0,0,0,0.5)', transition:'all 0.2s ease', cursor:'pointer' }} 
@@ -2760,16 +2844,18 @@ function App({ seed, onRestart, onNewGame, keyBindings = DEFAULT_KEYBINDINGS, ga
     if (isFinished && !statsSubmittedRef.current) {
       statsSubmittedRef.current = true;
       const hasCheat = !!(gameOverrides && Object.keys(DEFAULT_OVERRIDES).some(k => gameOverrides[k] != null));
+      if (hasCheat) { setShowSeedStats(true); return; }  // 🌟 チート使用時は記録を一切貯めない（閲覧のみ）
       // 盤面は座標(pos)付きで保存 → チャレンジャーの盤面をそのまま再現表示できる
       const pickBoard = (arr) => arr.map((u, pos) => (u && !u.isAnvil) ? { id: u.id, jaName: u.jaName, star: u.star || 1, pos } : null).filter(Boolean);
       const pickUnits = (arr) => arr.filter(u => u && !u.isAnvil).map(u => ({ id: u.id, jaName: u.jaName, star: u.star || 1 }));
-      const acctPlayer = account ? {
+      const acctPlayer = accountComplete(account) ? {  // 🌟 Riot+Discord両方の連携成立時のみ記録に紐付く
         riotId: account.riot ? account.riot.riotId : null,
         name: (account.riot && account.riot.gameName) || (account.discord && account.discord.username) || null,
         tier: account.riot ? account.riot.tier : null,
         rank: account.riot ? account.riot.rank : null,
         lp: account.riot ? account.riot.lp : null,
         discordName: account.discord ? account.discord.username : null,
+        discordId: account.discord ? account.discord.id : null,
         discordAvatar: account.discord ? account.discord.avatarUrl : null,
       } : null;
       const record = {
