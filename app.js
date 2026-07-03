@@ -241,6 +241,12 @@ async function consumeDiscordToken() {
   } catch (e) { return null; }
 }
 
+// 🏷️ エディタで非表示（旧セット等）にしたチャンピオンをシム全体から除外
+//    ショップ・ドロップ・指定リストなど全ての CHAMPS 参照に一括で効く
+if (typeof CHAMPS !== 'undefined') {
+  for (let i = CHAMPS.length - 1; i >= 0; i--) { if (CHAMPS[i] && CHAMPS[i].hidden) CHAMPS.splice(i, 1); }
+}
+
 function saveOverrides(o) {
   try { localStorage.setItem(OVERRIDE_STORAGE_KEY, JSON.stringify(o)); } catch (e) {}
 }
@@ -2621,6 +2627,8 @@ function Main() {
   };
   // Discord OAuth から戻ってきた時のトークン受け取り
   useEffect(() => {
+    // 連携成立済みなら起動のたびにユーザー情報を更新登録（ランク変動も反映される）
+    if (accountComplete(account)) registerSimUser(account);
     consumeDiscordToken().then(d => {
       if (d) { setAccount(prev => { const next = { ...(prev || {}), discord: d }; saveAccount(next); if (accountComplete(next)) registerSimUser(next); return next; }); setView('ACCOUNT'); }
     });

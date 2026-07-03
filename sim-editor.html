@@ -125,6 +125,14 @@ textarea{width:100%;min-height:56px;resize:vertical;line-height:1.5}
     </div>
     <div class="note">CHAMPS配列だけを丸ごと再生成します。特性の説明・神データなどファイル内の他の部分は保持されます。特性はカンマ区切りで入力。</div>
   </div>
+  <div class="card">
+    <div class="row" style="margin-bottom:0">
+      <span id="champ-set-tabs"></span>
+      <button onclick="addChampSet()" style="padding:5px 12px;font-size:11.5px">＋ セット追加</button>
+      <button onclick="toggleChampSetHidden()" id="champ-set-vis" style="padding:5px 12px;font-size:11.5px"></button>
+    </div>
+    <div class="note" style="margin-top:6px">非表示のセットのチャンピオンは、シミュレーターのショップ・ドロップ・指定リストすべてから除外されます（データは残ります）。新しいセットが来たら「＋セット追加」→ そのタブに追加していってください。</div>
+  </div>
   <div class="card" style="overflow-x:auto">
     <table><thead><tr><th></th><th>ID</th><th>英名</th><th>日本語名</th><th>コスト</th><th>特性（カンマ区切り）</th><th>画像名(img)</th><th></th></tr></thead>
     <tbody id="champ-body"><tr><td colspan="8" class="note">読み込み中…</td></tr></tbody></table>
@@ -143,6 +151,7 @@ textarea{width:100%;min-height:56px;resize:vertical;line-height:1.5}
     <div class="row">
       <label>ティア:</label><select id="aug-tier-filter" onchange="renderAugs()"><option value="all">全て</option><option value="silver">シルバー</option><option value="gold">ゴールド</option><option value="prismatic">プリズム</option></select>
       <label>表示:</label><select id="aug-vis-filter" onchange="renderAugs()"><option value="all">全て</option><option value="visible">表示中のみ</option><option value="hidden">非表示のみ</option></select>
+      <label>SET:</label><span id="aug-set-btns"></span>
       <label>検索:</label><input type="text" id="aug-search" style="width:150px" oninput="renderAugs()">
       <button onclick="addAug()" id="aug-add" disabled>＋ 新規オーグメント追加</button>
       <button class="gold" onclick="downloadAugs()" id="aug-dl" disabled>⬇ data-augments.js をダウンロード</button>
@@ -195,6 +204,7 @@ textarea{width:100%;min-height:56px;resize:vertical;line-height:1.5}
     <div class="row">
       <label>種類:</label><select id="item-type-filter" onchange="renderItems()"><option value="all">全て</option><option value="comp">素材</option><option value="completed">完成品</option><option value="artifact">アーティファクト</option></select>
       <label>表示:</label><select id="item-vis-filter" onchange="renderItems()"><option value="all">全て</option><option value="visible">表示中のみ</option><option value="hidden">非表示のみ</option></select>
+      <label>SET:</label><span id="item-set-btns"></span>
       <label>検索:</label><input type="text" id="item-search" style="width:150px" oninput="renderItems()">
       <button onclick="addItemRow()" id="item-add" disabled>＋ 新規アイテム追加</button>
       <button class="gold" onclick="downloadItems()" id="item-dl" disabled>⬇ data-items.js をダウンロード</button>
@@ -435,22 +445,58 @@ function buildManagedBlock(kind, state) {
 }
 
 /* ═══════ 🦸 チャンピオン（フル編集：CHAMPS配列を丸ごと再生成） ═══════ */
-let champText = null, champs = [];
+let champText = null, champs = [], activeChampSet = 'set17';
+function champSets() {
+  const found = [...new Set(champs.map(c => c.set))];
+  return [...new Set(['set17', 'set18', 'set19', ...found])];
+}
 function loadChampText(text) {
   champText = text;
   try {
     const got = new Function(text + ';\nreturn { CHAMPS: (typeof CHAMPS !== "undefined" ? CHAMPS : []) };')();
-    champs = (got.CHAMPS || []).map(c => ({ id: c.id || '', name: c.name || '', jaName: c.jaName || '', cost: c.cost || 1, traits: (c.traits || []).join(', '), img: c.img || '' }));
+    champs = (got.CHAMPS || []).map(c => ({ id: c.id || '', name: c.name || '', jaName: c.jaName || '', cost: c.cost || 1,
+      traits: (c.traits || []).join(', '), img: c.img || '', set: c.set || 'set17', hidden: !!c.hidden }));
   } catch (err) { showMsg('data-champions.js の解析に失敗: ' + err.message, true); return; }
   document.getElementById('champ-dl').disabled = false;
   document.getElementById('champ-add').disabled = false;
+  if (!champSets().includes(activeChampSet)) activeChampSet = champSets()[0];
   renderChamps();
+}
+function addChampSet() {
+  const name = prompt('新しいセット名（例: set20）');
+  if (!name) return;
+  activeChampSet = name.trim();
+  renderChamps();
+  showMsg(`${activeChampSet} タブを追加しました。＋新規チャンピオン追加で登録してください`);
+}
+function toggleChampSetHidden() {
+  const inSet = champs.filter(c => c.set === activeChampSet);
+  if (!inSet.length) return showMsg('このセットにチャンピオンがいません', true);
+  const nowHidden = inSet.every(c => c.hidden);
+  inSet.forEach(c => c.hidden = !nowHidden);
+  renderChamps();
+  showMsg(`${activeChampSet} を${nowHidden ? '表示' : '非表示'}にしました（ダウンロードして反映）`);
 }
 document.getElementById('champ-file').addEventListener('change', async ev => {
   const f = ev.target.files[0]; if (f) { loadChampText(await f.text()); document.getElementById('champ-status').textContent = `📂 ${f.name} を読み込みました`; }
 });
 function renderChamps() {
-  document.getElementById('champ-body').innerHTML = champs.map((c, i) => `<tr>
+  // セットタブバー
+  const sets = champSets();
+  if (!sets.includes(activeChampSet)) sets.push(activeChampSet);
+  document.getElementById('champ-set-tabs').innerHTML = sets.map(s => {
+    const n = champs.filter(c => c.set === s).length;
+    const allHidden = n > 0 && champs.filter(c => c.set === s).every(c => c.hidden);
+    return `<button style="padding:5px 12px;font-size:11.5px;margin-right:4px;${activeChampSet===s ? 'background:var(--gold);border-color:var(--gold)' : ''}"
+      onclick="activeChampSet='${esc(s)}';renderChamps()">${esc(s)}（${n}）${allHidden ? ' 🚫' : ''}</button>`;
+  }).join('');
+  const cur = champs.filter(c => c.set === activeChampSet);
+  const allHidden = cur.length > 0 && cur.every(c => c.hidden);
+  const visBtn = document.getElementById('champ-set-vis');
+  visBtn.textContent = allHidden ? `👁 ${activeChampSet} を表示に戻す` : `🚫 ${activeChampSet} を非表示にする`;
+  visBtn.style.background = allHidden ? '' : '#5e1616';
+  visBtn.style.borderColor = allHidden ? '' : 'var(--red)';
+  document.getElementById('champ-body').innerHTML = champs.map((c, i) => c.set !== activeChampSet ? '' : `<tr style="${c.hidden ? 'opacity:.5' : ''}">
     <td><img class="champ-img" src="${c.img ? `https://cdn.metatft.com/cdn-cgi/image/width=64,format=webp/file/metatft/champions/tft17_${esc(c.img.toLowerCase())}.png` : ''}" onerror="this.style.opacity=.15"></td>
     <td><input type="text" value="${esc(c.id)}" style="width:90px;font-family:Rajdhani" oninput="champs[${i}].id=this.value"></td>
     <td><input type="text" value="${esc(c.name)}" style="width:110px" oninput="champs[${i}].name=this.value"></td>
@@ -462,7 +508,7 @@ function renderChamps() {
   </tr>`).join('') || '<tr><td colspan="8" class="note">チャンピオンがいません（＋新規追加で作成）</td></tr>';
 }
 function addChamp() {
-  champs.push({ id: '', name: '', jaName: '', cost: 1, traits: '', img: '' });
+  champs.push({ id: '', name: '', jaName: '', cost: 1, traits: '', img: '', set: activeChampSet, hidden: false });
   renderChamps();
   const rows = document.querySelectorAll('#champ-body tr');
   if (rows.length) rows[rows.length - 1].scrollIntoView({ behavior: 'smooth' });
@@ -475,7 +521,7 @@ function downloadChamps() {
   if (new Set(ids).size !== ids.length) return showMsg('IDが重複しています', true);
   const lines = champs.map(c => {
     const traits = c.traits.split(',').map(t => t.trim()).filter(Boolean);
-    return `  {id:${JSON.stringify(c.id)}, name:${JSON.stringify(c.name)}, jaName:${JSON.stringify(c.jaName)}, cost:${c.cost}, traits:${JSON.stringify(traits)}, img:${JSON.stringify(c.img)}},`;
+    return `  {id:${JSON.stringify(c.id)}, name:${JSON.stringify(c.name)}, jaName:${JSON.stringify(c.jaName)}, cost:${c.cost}, traits:${JSON.stringify(traits)}, img:${JSON.stringify(c.img)}, set:${JSON.stringify(c.set || 'set17')}${c.hidden ? ', hidden:true' : ''}},`;
   });
   const startMark = 'const CHAMPS=[';
   const si = champText.indexOf(startMark);
@@ -504,13 +550,14 @@ function loadAugText(text) {
     const name = (seg.match(/name:\s*'((?:[^'\\]|\\.)*)'/) || [])[1];
     const tier = (seg.match(/tier:\s*'(silver|gold|prismatic)'/) || [])[1];
     const desc = (seg.match(/desc:\s*'((?:[^'\\]|\\.)*)'/) || [])[1];
+    const imgName = (seg.match(/imgName:\s*'((?:[^'\\]|\\.)*)'/) || [])[1] ?? '';
     if (name == null || tier == null) continue;
-    augEntries.push({ id: marks[i].id, start, end, name, tier, desc: desc ?? '',
-                      newName: name, newTier: tier, newDesc: desc ?? '', isAdded: false });
+    augEntries.push({ id: marks[i].id, start, end, name, tier, desc: desc ?? '', imgName,
+                      newName: name, newTier: tier, newDesc: desc ?? '', newImg: imgName, isAdded: false });
   }
   // 管理ブロックの新規追加分もリストに合流
-  augMB.added.forEach(a => augEntries.push({ id: a.id, name: a.name, tier: a.tier, desc: a.desc || '',
-    newName: a.name, newTier: a.tier, newDesc: a.desc || '', isAdded: true, addedRef: a }));
+  augMB.added.forEach(a => augEntries.push({ id: a.id, name: a.name, tier: a.tier, desc: a.desc || '', imgName: a.imgName || '',
+    newName: a.name, newTier: a.tier, newDesc: a.desc || '', newImg: a.imgName || '', isAdded: true, addedRef: a }));
   document.getElementById('aug-dl').disabled = false;
   document.getElementById('aug-add').disabled = false;
   renderAugs();
@@ -518,8 +565,15 @@ function loadAugText(text) {
 document.getElementById('aug-file').addEventListener('change', async ev => {
   const f = ev.target.files[0]; if (f) { loadAugText(await f.text()); document.getElementById('aug-status').textContent = `📂 ${f.name} を読み込みました`; }
 });
+let augSetFilter = 'all';
+function renderAugSetBtns() {
+  document.getElementById('aug-set-btns').innerHTML = ['all', ...SET_TAGS, 'none'].map(t =>
+    `<button style="padding:5px 10px;font-size:11.5px;margin-right:4px;${augSetFilter===t ? 'background:var(--gold);border-color:var(--gold)' : ''}"
+      onclick="augSetFilter='${t}';renderAugs()">${t==='all'?'全て':t==='none'?'タグなし':t}</button>`).join('');
+}
 function renderAugs() {
   if (augText == null) { document.getElementById('aug-list').innerHTML = '<div class="card note">読み込み中…</div>'; return; }
+  renderAugSetBtns();
   const tf = document.getElementById('aug-tier-filter').value;
   const vf = document.getElementById('aug-vis-filter').value;
   const q = document.getElementById('aug-search').value.trim().toLowerCase();
@@ -529,22 +583,34 @@ function renderAugs() {
     if (tf !== 'all' && a.newTier !== tf) return '';
     if (vf === 'visible' && isHidden) return '';
     if (vf === 'hidden' && !isHidden) return '';
+    const tag = augMB.tags[a.id] || '';
+    if (augSetFilter === 'none' && tag) return '';
+    if (augSetFilter !== 'all' && augSetFilter !== 'none' && tag !== augSetFilter) return '';
     if (q && !a.newName.toLowerCase().includes(q) && !a.id.toLowerCase().includes(q)) return '';
-    const changed = a.newName !== a.name || a.newTier !== a.tier || a.newDesc !== a.desc;
+    const changed = a.newName !== a.name || a.newTier !== a.tier || a.newDesc !== a.desc || a.newImg !== a.imgName;
     return `<div class="card" style="${isHidden ? 'opacity:.55;border-style:dashed' : ''}">
       <div class="row">
+        <img class="champ-img" style="width:34px;height:34px" src="${augIconUrl(a.newImg)}" onerror="this.style.opacity=.15" id="augimg-${i}">
         <label style="display:flex;align-items:center;gap:4px;cursor:pointer">
           <input type="checkbox" ${!isHidden ? 'checked' : ''} onchange="toggleAugHidden('${esc(a.id)}')"> 表示
         </label>
-        <span style="font-family:Rajdhani;color:var(--blue);font-size:12px;min-width:120px">${esc(a.id)}${a.isAdded ? ' <span class="badge" style="background:#e5f0fb;color:#0066cc;border:1px solid #a9cdf0">新規</span>' : ''}</span>
-        <input type="text" value="${esc(a.newName)}" style="width:200px;font-weight:900" oninput="augEntries[${i}].newName=this.value">
+        <span style="font-family:Rajdhani;color:var(--blue);font-size:12px;min-width:110px">${esc(a.id)}${a.isAdded ? ' <span class="badge" style="background:#e5f0fb;color:#0066cc;border:1px solid #a9cdf0">新規</span>' : ''}</span>
+        <input type="text" value="${esc(a.newName)}" style="width:180px;font-weight:900" oninput="augEntries[${i}].newName=this.value">
         <select onchange="augEntries[${i}].newTier=this.value;renderAugs()">
           ${['silver','gold','prismatic'].map(t => `<option value="${t}" ${a.newTier===t?'selected':''}>${tierJa[t]}</option>`).join('')}
         </select>
-        <label>SETタグ:</label>
-        <input type="text" value="${esc(augMB.tags[a.id] || '')}" placeholder="例: set17" style="width:90px" oninput="setAugTag('${esc(a.id)}', this.value)">
+        <label>SET:</label>
+        <select onchange="setAugTag('${esc(a.id)}', this.value);renderAugs()">
+          <option value="">なし</option>
+          ${SET_TAGS.map(t => `<option value="${t}" ${(augMB.tags[a.id]||'')===t?'selected':''}>${t}</option>`).join('')}
+        </select>
         ${changed ? '<span class="badge" style="background:#fdf3d7;color:#8a6508;border:1px solid #e3cd8a">変更あり</span>' : ''}
         ${a.isAdded ? `<button class="danger" style="padding:4px 9px;font-size:11px" onclick="removeAddedAug(${i})">削除</button>` : ''}
+      </div>
+      <div class="row">
+        <label>画像(imgName):</label>
+        <input type="text" value="${esc(a.newImg)}" placeholder="例: warlordshonor_ii または画像URL" style="flex:1;max-width:420px;font-family:Rajdhani"
+          oninput="augEntries[${i}].newImg=this.value" onchange="document.getElementById('augimg-${i}').src=augIconUrl(this.value)">
       </div>
       <textarea oninput="augEntries[${i}].newDesc=this.value">${esc(a.newDesc)}</textarea>
     </div>`;
@@ -583,11 +649,12 @@ function downloadAugs() {
     if (a.newName !== a.name) seg = seg.replace(`name: '${a.name}'`, `name: '${escQ(a.newName)}'`).replace(`name:'${a.name}'`, `name:'${escQ(a.newName)}'`);
     if (a.newTier !== a.tier) seg = seg.replace(`tier: '${a.tier}'`, `tier: '${a.newTier}'`).replace(`tier:'${a.tier}'`, `tier:'${a.newTier}'`);
     if (a.newDesc !== a.desc && a.desc) seg = seg.replace(`desc: '${a.desc}'`, `desc: '${escQ(a.newDesc)}'`).replace(`desc:'${a.desc}'`, `desc:'${escQ(a.newDesc)}'`);
+    if (a.newImg !== a.imgName && a.imgName) seg = seg.replace(`imgName: '${a.imgName}'`, `imgName: '${escQ(a.newImg)}'`).replace(`imgName:'${a.imgName}'`, `imgName:'${escQ(a.newImg)}'`);
     out = out.slice(0, a.start) + seg + out.slice(a.end);
   }
   // 新規分のname/desc/tier編集を反映
   augEntries.filter(a => a.isAdded && a.addedRef).forEach(a => {
-    a.addedRef.name = a.newName; a.addedRef.tier = a.newTier; a.addedRef.desc = a.newDesc;
+    a.addedRef.name = a.newName; a.addedRef.tier = a.newTier; a.addedRef.desc = a.newDesc; a.addedRef.imgName = a.newImg;
   });
   out = out.replace(/\s+$/, '\n') + buildManagedBlock('aug', augMB);
   const a2 = document.createElement('a');
@@ -621,10 +688,28 @@ function loadItemText(text) {
 document.getElementById('item-file').addEventListener('change', async ev => {
   const f = ev.target.files[0]; if (f) { loadItemText(await f.text()); document.getElementById('item-status').textContent = `📂 ${f.name} を読み込みました`; }
 });
-const itemIconUrl = (it) => it.imgName
-  ? `https://cdn.metatft.com/cdn-cgi/image/width=64,format=webp/file/metatft/items/${it.imgName}.png`
-  : `https://cdn.metatft.com/cdn-cgi/image/width=64,format=webp/file/metatft/items/${(it.name||'').replace(/[^a-zA-Z]/g,'').toLowerCase()}.png`;
+const SET_TAGS = ['set17', 'set18', 'set19', 'set20'];  // 🏷️ セット管理ボタン
+// アイテム画像URL（app.js の getMetaTFTItemUrl と同じロジック）
+const itemIconUrl = (it) => {
+  if (it.imgName) return `https://cdn.metatft.com/cdn-cgi/image/width=64,format=webp/file/metatft/items/${it.imgName}.png`;
+  const n = it.name || '';
+  if (n.includes('Emblem')) {
+    const t = n.replace(' Emblem', '').toLowerCase().replace(/\s+/g, '').replace(/\./g, '');
+    return `https://cdn.metatft.com/cdn-cgi/image/width=64,format=webp/file/metatft/items/tft17_item_${t}emblemitem.png`;
+  }
+  const f = n.toLowerCase().replace(/['.]/g, '').replace(/\s+/g, '');
+  return `https://cdn.metatft.com/cdn-cgi/image/width=64,format=webp/file/metatft/items/tft_item_${f}.png`;
+};
+// オーグメント画像URL（app.js の getAugmentIconUrl と同じロジック）
+const augIconUrl = (imgName) => !imgName ? '' : (imgName.startsWith('http') ? imgName : `https://cdn.metatft.com/cdn-gi/image/width=64,format=webp/file/metatft/augments/${imgName}.png`.replace('cdn-gi','cdn-cgi'));
+let itemSetFilter = 'all';
+function renderItemSetBtns() {
+  document.getElementById('item-set-btns').innerHTML = ['all', ...SET_TAGS, 'none'].map(t =>
+    `<button style="padding:5px 10px;font-size:11.5px;margin-right:4px;${itemSetFilter===t ? 'background:var(--gold);border-color:var(--gold)' : ''}"
+      onclick="itemSetFilter='${t}';renderItems()">${t==='all'?'全て':t==='none'?'タグなし':t}</button>`).join('');
+}
 function renderItems() {
+  renderItemSetBtns();
   const tf = document.getElementById('item-type-filter').value;
   const vf = document.getElementById('item-vis-filter').value;
   const q = document.getElementById('item-search').value.trim().toLowerCase();
@@ -634,13 +719,19 @@ function renderItems() {
     if (tf !== 'all' && it.type !== tf) return '';
     if (vf === 'visible' && isHidden) return '';
     if (vf === 'hidden' && !isHidden) return '';
+    const tag = itemMB.tags[it.id] || '';
+    if (itemSetFilter === 'none' && tag) return '';
+    if (itemSetFilter !== 'all' && itemSetFilter !== 'none' && tag !== itemSetFilter) return '';
     if (q && !it.ja.toLowerCase().includes(q) && !(it.name||'').toLowerCase().includes(q) && !(it.id||'').toLowerCase().includes(q)) return '';
     return `<tr style="${isHidden ? 'opacity:.5' : ''}">
       <td><img class="champ-img" src="${itemIconUrl(it)}" onerror="this.style.opacity=.15"></td>
       <td style="font-family:Rajdhani;color:var(--blue)">${esc(it.id)}${it.isAdded ? ' <span class="badge" style="background:#e5f0fb;color:#0066cc;border:1px solid #a9cdf0">新規</span>' : ''}</td>
       <td style="font-weight:700">${esc(it.ja)} <span class="note">${esc(it.name||'')}</span></td>
       <td>${typeJa[it.type] || esc(it.type)}</td>
-      <td><input type="text" value="${esc(itemMB.tags[it.id] || '')}" placeholder="例: set17" style="width:90px" oninput="setItemTag('${esc(it.id)}', this.value)"></td>
+      <td><select onchange="setItemTag('${esc(it.id)}', this.value);renderItems()">
+        <option value="">なし</option>
+        ${SET_TAGS.map(t => `<option value="${t}" ${(itemMB.tags[it.id]||'')===t?'selected':''}>${t}</option>`).join('')}
+      </select></td>
       <td><label style="cursor:pointer"><input type="checkbox" ${!isHidden ? 'checked' : ''} onchange="toggleItemHidden('${esc(it.id)}')"> 表示</label>
         ${it.isAdded ? ` <button class="danger" style="padding:3px 8px;font-size:10.5px" onclick="removeAddedItem(${i})">削除</button>` : ''}</td>
     </tr>`;
@@ -803,8 +894,13 @@ function renderPerms() {
       </div>
     </div>`;
   };
+  // sim-config.js の固定管理者（削除不可・常に有効）
+  const cfgAd = (window.SIM_CONFIG && window.SIM_CONFIG.admins) || { riotIds: [], discordIds: [] };
+  const fixedChips = [...(cfgAd.riotIds || []), ...(cfgAd.discordIds || [])].map(v =>
+    `<span class="pill" style="padding:4px 8px;background:#fdf3d7;border:1px solid var(--gold);color:var(--gold);font-weight:900">🔒 ${esc(v)} <span style="font-weight:400;font-size:9.5px">(sim-config固定)</span></span>`).join(' ');
   document.getElementById('admins-editor').innerHTML =
-    box('admins', 'riotIds', 'Riot ID で指定', '例: Name#JP1') + box('admins', 'discordIds', 'Discord ID で指定', '例: 123456789012345678');
+    (fixedChips ? `<div style="margin-bottom:10px"><div style="font-size:11.5px;font-weight:700;color:var(--textdim);margin-bottom:5px">固定管理者（sim-config.js。ここでは削除できません）</div><div style="display:flex;flex-wrap:wrap;gap:5px">${fixedChips}</div></div>` : '') +
+    box('admins', 'riotIds', 'Riot ID で指定（追加分）', '例: Name#JP1') + box('admins', 'discordIds', 'Discord ID で指定（追加分）', '例: 123456789012345678');
   document.getElementById('featured-editor').innerHTML =
     box('featured', 'riotIds', 'Riot ID で指定', '例: Name#JP1') + box('featured', 'discordIds', 'Discord ID で指定', '例: 123456789012345678');
 }
