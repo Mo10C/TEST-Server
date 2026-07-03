@@ -750,10 +750,15 @@ function downloadItems() {
   showMsg('data-items.js をダウンロードしました');
 }
 
-/* 起動時：3ファイルを自動読み込み */
+/* 起動時：3ファイル＋記録データ＋ユーザー一覧を自動読み込み */
 autoLoadDataFile('data-champions.js', 'champ-status', loadChampText);
 autoLoadDataFile('data-augments.js', 'aug-status', loadAugText);
 autoLoadDataFile('data-items.js', 'item-status', loadItemText);
+(function autoStart() {
+  const c = fbCfg();
+  if (c.apiKey && c.projectId) { loadShared(); loadUsers(); }   // 共有設定があれば全部読む
+  else { loadLocal(); }                                          // なければローカル記録だけ
+})();
 
 /* ═══════ 👥 ユーザー一覧（sim_users） ═══════ */
 const RANK_JA2 = { IRON:'アイアン', BRONZE:'ブロンズ', SILVER:'シルバー', GOLD:'ゴールド', PLATINUM:'プラチナ', EMERALD:'エメラルド', DIAMOND:'ダイヤモンド', MASTER:'マスター', GRANDMASTER:'グランドマスター', CHALLENGER:'チャレンジャー' };

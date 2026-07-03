@@ -867,6 +867,21 @@ function SeedStatsDrawer({ seed, open, onClose }) {
   const [sharedMode, setSharedMode] = useState(false);
   const [errMsg, setErrMsg] = useState(null);
   const [featured, setFeatured] = useState({ riotIds: [], discordIds: [] }); // ⭐ Firestore側の注目プレイヤーリスト
+  const [boardView, setBoardView] = useState(null); // 🏆 盤面モーダルで表示中の記録
+  // 記録は {name, tier} しか持たないため、名前からオーグメント本体（imgName）を引く
+  const augMetaByName = (name) => {
+    for (const t of ['silver', 'gold', 'prismatic']) {
+      const f = ((typeof AUGMENTS_DATA !== 'undefined' && AUGMENTS_DATA[t]) || []).find(a => a.name === name);
+      if (f) return f;
+    }
+    return null;
+  };
+  const augIconEl = (name, size = 22) => {
+    const meta = augMetaByName(name);
+    return (meta && meta.imgName)
+      ? <img src={getAugmentIconUrl(meta)} style={{ width: size, height: size, borderRadius: 4, border: '1px solid rgba(148,163,184,0.5)', background: '#0b1622', flexShrink: 0, zIndex: 1 }} />
+      : <span style={{ fontSize: size * 0.6, flexShrink: 0, zIndex: 1 }}>✨</span>;
+  };
   const [rankFilter, setRankFilter] = useState('ALL'); // 📶 ランクフィルター（○○以上）
   const TIER_ORDER = ['IRON','BRONZE','SILVER','GOLD','PLATINUM','EMERALD','DIAMOND','MASTER','GRANDMASTER','CHALLENGER'];
   const [playerName, setPlayerName] = useState(getStatsPlayerName());
@@ -992,9 +1007,13 @@ function SeedStatsDrawer({ seed, open, onClose }) {
             </div>
             {errMsg && <div style={{ fontSize: 10, color: '#ff9f43', marginTop: 6 }}>⚠ 共有データの取得に失敗（ローカル表示中）: {errMsg}</div>}
 
-            {agg.topRecs.length > 0 && (
-              <React.Fragment>
-                {secTitle('🏆 注目プレイヤーの盤面')}
+            <React.Fragment>
+                {secTitle('🏆 チャレンジャー・注目選手')}
+                {agg.topRecs.length === 0 && (
+                  <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', padding: '4px 2px' }}>
+                    このシードにはまだチャレンジャー・注目選手の記録がありません
+                  </div>
+                )}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
                   {agg.topRecs.map((r, ti) => {
                     const p = r.player;
@@ -1042,9 +1061,11 @@ function SeedStatsDrawer({ seed, open, onClose }) {
                               ))}
                             </div>
                             {(r.data.augments || []).length > 0 && (
-                              <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', justifyContent: 'center' }}>
+                              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center' }}>
                                 {r.data.augments.map((a, k) => (
-                                  <span key={k} style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 10, background: 'rgba(15,23,42,0.8)', border: '1px solid rgba(148,163,184,0.4)', color: (typeof TIER_COLORS !== 'undefined' && TIER_COLORS[a.tier]) || '#fff' }}>{a.name}</span>
+                                  <span key={k} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, fontWeight: 700, padding: '2px 7px 2px 3px', borderRadius: 10, background: 'rgba(15,23,42,0.8)', border: '1px solid rgba(148,163,184,0.4)', color: (typeof TIER_COLORS !== 'undefined' && TIER_COLORS[a.tier]) || '#fff' }}>
+                                    {augIconEl(a.name, 18)}{a.name}
+                                  </span>
                                 ))}
                               </div>
                             )}
@@ -1055,13 +1076,12 @@ function SeedStatsDrawer({ seed, open, onClose }) {
                   })}
                 </div>
               </React.Fragment>
-            )}
 
             {secTitle('✨ オーグメント取得率')}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               {agg.augs.length === 0 ? <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>データなし</span> :
                 agg.augs.map(a => barRow('aug_' + a.name,
-                  <span style={{ fontSize: 13, flexShrink: 0, zIndex: 1 }}>✨</span>,
+                  augIconEl(a.name, 24),
                   <span style={{ color: (typeof TIER_COLORS !== 'undefined' && TIER_COLORS[a.tier]) || '#fff' }}>{a.name}</span>,
                   a.count))}
             </div>
