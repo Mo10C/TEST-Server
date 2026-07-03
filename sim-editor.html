@@ -65,7 +65,6 @@ textarea{width:100%;min-height:56px;resize:vertical;line-height:1.5}
 <div class="tabs">
   <div class="tab active" data-page="records">📊 記録データ</div>
   <div class="tab" data-page="users">👥 ユーザー</div>
-  <div class="tab" data-page="perms">🛡️ 権限・注目</div>
   <div class="tab" data-page="champs">🦸 チャンピオン</div>
   <div class="tab" data-page="augs">✨ オーグメント</div>
   <div class="tab" data-page="items">🗡️ アイテム</div>
@@ -169,26 +168,8 @@ textarea{width:100%;min-height:56px;resize:vertical;line-height:1.5}
       <button class="gold" onclick="loadUsers()">🌐 読み込み</button>
       <span class="note" id="users-status">未読み込み</span>
     </div>
+    <div class="note">各ユーザーの「🛡️ 管理者」「⭐ 注目」ボタンでタグの付け外しができ、<b>押した瞬間にFirestoreへ保存</b>されます。管理者＝エディタに入れる人。注目＝チャレンジャーでなくても「みんなの結果」に盤面が表示される人。🔒はsim-config.jsの固定管理者です。</div>
     <div id="users-body"><div class="note">「読み込み」を押してください</div></div>
-  </div>
-</div>
-
-<!-- ══════════ 🛡️ 権限・注目 ══════════ -->
-<div class="page" id="page-perms">
-  <div class="card">
-    <h2>🛡️ 管理者リスト（Firestore: sim_meta/admins）</h2>
-    <div class="note" style="margin-bottom:8px">ここに追加した人は、アカウント連携するとエディタに入れるようになります。sim-config.js の admins（Mo10C#819）はここと別で常に有効です。</div>
-    <div id="admins-editor"></div>
-  </div>
-  <div class="card">
-    <h2>⭐ 注目プレイヤー（Firestore: sim_meta/featured）</h2>
-    <div class="note" style="margin-bottom:8px">チャレンジャーに加え、ここに追加した人の記録が「みんなの結果」に「○○の盤面」として表示されます。</div>
-    <div id="featured-editor"></div>
-  </div>
-  <div class="row">
-    <button class="gold" onclick="loadPerms()">🌐 読み込み</button>
-    <button onclick="savePerms()" id="perms-save" disabled>💾 保存（Firestoreへ反映）</button>
-    <span class="note" id="perms-status">未読み込み</span>
   </div>
 </div>
 
@@ -777,25 +758,35 @@ autoLoadDataFile('data-items.js', 'item-status', loadItemText);
 /* ═══════ 👥 ユーザー一覧（sim_users） ═══════ */
 const RANK_JA2 = { IRON:'アイアン', BRONZE:'ブロンズ', SILVER:'シルバー', GOLD:'ゴールド', PLATINUM:'プラチナ', EMERALD:'エメラルド', DIAMOND:'ダイヤモンド', MASTER:'マスター', GRANDMASTER:'グランドマスター', CHALLENGER:'チャレンジャー' };
 let simUsers = [];
-let usersAdminSet = { riotIds: [], discordIds: [] };  // 階層表示用：管理者判定リスト
+// 🏷️ タグ状態：sim-config固定（🔒） と Firestore（sim_meta）を分離して保持
+let usersCfgAdmins = { riotIds: [], discordIds: [] };                 // 固定管理者（外せない）
+let usersMetaFS = { admins: { riotIds: [], discordIds: [] }, featured: { riotIds: [], discordIds: [] } };
+let usersAdminSet = { riotIds: [], discordIds: [] };                  // 階層表示用（固定＋Firestoreの合算）
+const rebuildAdminSet = () => {
+  usersAdminSet = {
+    riotIds: [...(usersCfgAdmins.riotIds || []), ...usersMetaFS.admins.riotIds].map(x => (x || '').toLowerCase()),
+    discordIds: [...(usersCfgAdmins.discordIds || []), ...usersMetaFS.admins.discordIds],
+  };
+};
 async function loadUsers() {
   const c = fbCfg();
   if (!c.apiKey || !c.projectId) return showMsg('Firebase設定を確認してください', true);
   document.getElementById('users-status').textContent = '読み込み中…';
-  // 管理者リスト（sim-config.js ＋ Firestore sim_meta/admins）を先に取得
+  // 管理者・注目リストを取得（sim_meta/admins, sim_meta/featured）
   try {
-    const cfgAd = (window.SIM_CONFIG && window.SIM_CONFIG.admins) || { riotIds: [], discordIds: [] };
-    let fsAd = { riotIds: [], discordIds: [] };
-    try {
-      const r = await fetch(`https://firestore.googleapis.com/v1/projects/${c.projectId}/databases/(default)/documents/sim_meta/admins?key=${c.apiKey}`);
-      if (r.ok) {
+    usersCfgAdmins = (window.SIM_CONFIG && window.SIM_CONFIG.admins) || { riotIds: [], discordIds: [] };
+    const getDoc = async (name) => {
+      try {
+        const r = await fetch(`https://firestore.googleapis.com/v1/projects/${c.projectId}/databases/(default)/documents/sim_meta/${name}?key=${c.apiKey}`);
+        if (!r.ok) return { riotIds: [], discordIds: [] };
         const j = await r.json();
         const arr = (f) => ((j.fields && j.fields[f] && j.fields[f].arrayValue && j.fields[f].arrayValue.values) || []).map(v => v.stringValue);
-        fsAd = { riotIds: arr('riotIds'), discordIds: arr('discordIds') };
-      }
-    } catch(e2){}
-    usersAdminSet = { riotIds: [...(cfgAd.riotIds||[]), ...fsAd.riotIds].map(x => (x||'').toLowerCase()),
-                      discordIds: [...(cfgAd.discordIds||[]), ...fsAd.discordIds] };
+        return { riotIds: arr('riotIds'), discordIds: arr('discordIds') };
+      } catch(e2) { return { riotIds: [], discordIds: [] }; }
+    };
+    usersMetaFS.admins = await getDoc('admins');
+    usersMetaFS.featured = await getDoc('featured');
+    rebuildAdminSet();
   } catch(e2){}
   try {
     const res = await fetch(`https://firestore.googleapis.com/v1/projects/${c.projectId}/databases/(default)/documents/sim_users?pageSize=300&key=${c.apiKey}`);
@@ -812,6 +803,36 @@ async function loadUsers() {
     renderUsers();
   } catch(e) { document.getElementById('users-status').textContent = '失敗'; showMsg('読み込み失敗: ' + e.message, true); }
 }
+// sim_meta ドキュメントへ即時保存
+async function saveMetaDoc(name, data) {
+  const c = fbCfg();
+  const toArr = (a) => ({ arrayValue: { values: (a || []).map(v => ({ stringValue: v })) } });
+  const res = await fetch(`https://firestore.googleapis.com/v1/projects/${c.projectId}/databases/(default)/documents/sim_meta/${name}?key=${c.apiKey}`,
+    { method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fields: { riotIds: toArr(data.riotIds), discordIds: toArr(data.discordIds) } }) });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+}
+// リストからユーザーを出し入れ（discordId基準。riotIdの残骸も同時に掃除）
+const userInList = (u, L) => (L.discordIds || []).includes(u.discordId) || (L.riotIds || []).some(x => (x || '').toLowerCase() === (u.riotId || '').toLowerCase());
+const removeUserFromList = (u, L) => {
+  L.discordIds = (L.discordIds || []).filter(x => x !== u.discordId);
+  L.riotIds = (L.riotIds || []).filter(x => (x || '').toLowerCase() !== (u.riotId || '').toLowerCase());
+};
+async function toggleUserAdmin(i) {
+  const u = simUsers[i]; if (!u) return;
+  if (userInList(u, usersCfgAdmins)) return showMsg('sim-config.js の固定管理者はここでは外せません', true);
+  const L = usersMetaFS.admins;
+  if (userInList(u, L)) removeUserFromList(u, L); else L.discordIds.push(u.discordId);
+  try { await saveMetaDoc('admins', L); rebuildAdminSet(); renderUsers(); showMsg(`${u.discordName} の管理者タグを更新しました`); }
+  catch(err) { showMsg('保存失敗（Firestoreルールで sim_meta の write 許可を確認）: ' + err.message, true); }
+}
+async function toggleUserFeatured(i) {
+  const u = simUsers[i]; if (!u) return;
+  const L = usersMetaFS.featured;
+  if (userInList(u, L)) removeUserFromList(u, L); else L.discordIds.push(u.discordId);
+  try { await saveMetaDoc('featured', L); renderUsers(); showMsg(`${u.discordName} の注目タグを更新しました`); }
+  catch(err) { showMsg('保存失敗（Firestoreルールで sim_meta の write 許可を確認）: ' + err.message, true); }
+}
 function renderUsers() {
   // 🏔️ 階層: 管理者 → チャレンジャー → グランドマスター → マスター → …（ランク順）→ ランクなし
   const isAdminUser = (u) => usersAdminSet.riotIds.includes((u.riotId || '').toLowerCase()) || usersAdminSet.discordIds.includes(u.discordId);
@@ -827,14 +848,25 @@ function renderUsers() {
   });
   // グループ内は LP降順 → 更新新しい順
   Object.values(bucket).forEach(list => list.sort((a, b) => (b.u.lp - a.u.lp) || (b.u.updatedAt - a.u.updatedAt)));
-  const row = ({ u, i }) => `<tr>
+  const row = ({ u, i }) => {
+    const cfgLocked = userInList(u, usersCfgAdmins);
+    const isAd = cfgLocked || userInList(u, usersMetaFS.admins);
+    const isFt = userInList(u, usersMetaFS.featured);
+    return `<tr>
       <td style="width:36px">${u.avatar ? `<img src="${esc(u.avatar)}" style="width:28px;height:28px;border-radius:50%">` : '👤'}</td>
       <td style="font-weight:900">${esc(u.discordName)} <span class="note">(${esc(u.discordId)})</span></td>
       <td style="font-family:Rajdhani;color:var(--blue);font-weight:700">${esc(u.riotId)}</td>
       <td>${u.tier ? `${RANK_JA2[u.tier] || esc(u.tier)} ${['MASTER','GRANDMASTER','CHALLENGER'].includes(u.tier) ? '' : esc(u.rank)} ${u.lp}LP` : '<span class="note">なし</span>'}</td>
+      <td style="white-space:nowrap">
+        <button style="padding:4px 10px;font-size:11px;${isAd ? 'background:var(--gold);border-color:var(--gold)' : 'background:#e2e8f0;border-color:var(--border);color:#64748b'}"
+          ${cfgLocked ? 'disabled title="sim-config.jsの固定管理者"' : `onclick="toggleUserAdmin(${i})"`}>${cfgLocked ? '🔒' : '🛡️'} 管理者</button>
+        <button style="padding:4px 10px;font-size:11px;${isFt ? 'background:var(--gold);border-color:var(--gold)' : 'background:#e2e8f0;border-color:var(--border);color:#64748b'}"
+          onclick="toggleUserFeatured(${i})">⭐ 注目</button>
+      </td>
       <td class="note">${u.updatedAt ? new Date(u.updatedAt).toLocaleString('ja-JP') : ''}</td>
       <td><button class="danger" style="padding:4px 9px;font-size:11px" onclick="deleteUser(${i})">削除</button></td>
     </tr>`;
+  };
   document.getElementById('users-body').innerHTML = simUsers.length === 0
     ? '<div class="note">ユーザーがいません</div>'
     : groups.filter(g => bucket[g.key].length > 0).map(g => `
@@ -842,7 +874,7 @@ function renderUsers() {
         <div style="font-size:12.5px;font-weight:900;color:${g.color};border-bottom:2px solid ${g.color};padding-bottom:4px;margin-bottom:4px">
           ${g.label} <span class="note">（${bucket[g.key].length}人）</span>
         </div>
-        <table><thead><tr><th></th><th>Discord名</th><th>Riot ID</th><th>ランク</th><th>更新日時</th><th></th></tr></thead>
+        <table><thead><tr><th></th><th>Discord名</th><th>Riot ID</th><th>ランク</th><th>タグ</th><th>更新日時</th><th></th></tr></thead>
         <tbody>${bucket[g.key].map(row).join('')}</tbody></table>
       </div>`).join('');
 }
@@ -856,75 +888,6 @@ async function deleteUser(i) {
     if (!res.ok) throw new Error('HTTP ' + res.status);
     simUsers.splice(i, 1); renderUsers(); showMsg('削除しました');
   } catch(e) { showMsg('削除失敗: ' + e.message, true); }
-}
-
-/* ═══════ 🛡️ 権限・注目プレイヤー管理（sim_meta） ═══════ */
-let perms = { admins: { riotIds: [], discordIds: [] }, featured: { riotIds: [], discordIds: [] } };
-async function loadPerms() {
-  const c = fbCfg();
-  if (!c.apiKey || !c.projectId) return showMsg('Firebase設定を確認してください', true);
-  document.getElementById('perms-status').textContent = '読み込み中…';
-  const getDoc = async (name) => {
-    try {
-      const r = await fetch(`https://firestore.googleapis.com/v1/projects/${c.projectId}/databases/(default)/documents/sim_meta/${name}?key=${c.apiKey}`);
-      if (!r.ok) return { riotIds: [], discordIds: [] };
-      const j = await r.json();
-      const arr = (f) => ((j.fields && j.fields[f] && j.fields[f].arrayValue && j.fields[f].arrayValue.values) || []).map(v => v.stringValue).filter(Boolean);
-      return { riotIds: arr('riotIds'), discordIds: arr('discordIds') };
-    } catch(e) { return { riotIds: [], discordIds: [] }; }
-  };
-  perms.admins = await getDoc('admins');
-  perms.featured = await getDoc('featured');
-  document.getElementById('perms-save').disabled = false;
-  document.getElementById('perms-status').textContent = '読み込み完了';
-  renderPerms();
-}
-function renderPerms() {
-  const box = (docKey, listKey, label, placeholder) => {
-    const items = perms[docKey][listKey];
-    return `<div style="margin-bottom:10px">
-      <div style="font-size:11.5px;font-weight:700;color:var(--textdim);margin-bottom:5px">${label}</div>
-      <div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:6px">
-        ${items.map((v, i) => `<span class="pill" style="display:inline-flex;align-items:center;gap:5px;padding:4px 8px">${esc(v)}<b style="cursor:pointer;color:var(--red)" onclick="perms['${docKey}']['${listKey}'].splice(${i},1);renderPerms()">✕</b></span>`).join('') || '<span class="note">なし</span>'}
-      </div>
-      <div style="display:flex;gap:6px">
-        <input type="text" id="in-${docKey}-${listKey}" placeholder="${placeholder}" style="flex:1;max-width:280px"
-          onkeydown="if(event.key==='Enter')addPerm('${docKey}','${listKey}')">
-        <button onclick="addPerm('${docKey}','${listKey}')" style="padding:6px 12px;font-size:12px">＋追加</button>
-      </div>
-    </div>`;
-  };
-  // sim-config.js の固定管理者（削除不可・常に有効）
-  const cfgAd = (window.SIM_CONFIG && window.SIM_CONFIG.admins) || { riotIds: [], discordIds: [] };
-  const fixedChips = [...(cfgAd.riotIds || []), ...(cfgAd.discordIds || [])].map(v =>
-    `<span class="pill" style="padding:4px 8px;background:#fdf3d7;border:1px solid var(--gold);color:var(--gold);font-weight:900">🔒 ${esc(v)} <span style="font-weight:400;font-size:9.5px">(sim-config固定)</span></span>`).join(' ');
-  document.getElementById('admins-editor').innerHTML =
-    (fixedChips ? `<div style="margin-bottom:10px"><div style="font-size:11.5px;font-weight:700;color:var(--textdim);margin-bottom:5px">固定管理者（sim-config.js。ここでは削除できません）</div><div style="display:flex;flex-wrap:wrap;gap:5px">${fixedChips}</div></div>` : '') +
-    box('admins', 'riotIds', 'Riot ID で指定（追加分）', '例: Name#JP1') + box('admins', 'discordIds', 'Discord ID で指定（追加分）', '例: 123456789012345678');
-  document.getElementById('featured-editor').innerHTML =
-    box('featured', 'riotIds', 'Riot ID で指定', '例: Name#JP1') + box('featured', 'discordIds', 'Discord ID で指定', '例: 123456789012345678');
-}
-function addPerm(docKey, listKey) {
-  const el = document.getElementById(`in-${docKey}-${listKey}`);
-  const v = el.value.trim();
-  if (!v) return;
-  if (!perms[docKey][listKey].includes(v)) perms[docKey][listKey].push(v);
-  el.value = ''; renderPerms();
-}
-async function savePerms() {
-  const c = fbCfg();
-  const put = async (name, data) => {
-    const url = `https://firestore.googleapis.com/v1/projects/${c.projectId}/databases/(default)/documents/sim_meta/${name}?key=${c.apiKey}`;
-    const toArr = (a) => ({ arrayValue: { values: a.map(v => ({ stringValue: v })) } });
-    const res = await fetch(url, { method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ fields: { riotIds: toArr(data.riotIds), discordIds: toArr(data.discordIds) } }) });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-  };
-  try {
-    await put('admins', perms.admins);
-    await put('featured', perms.featured);
-    showMsg('保存しました（次回のアクセスから反映されます）');
-  } catch(e) { showMsg('保存失敗（Firestoreルールで sim_meta の write が許可されているか確認）: ' + e.message, true); }
 }
 
 /* ═══════ 📊 シード一覧チップ（記録タブ強化） ═══════ */

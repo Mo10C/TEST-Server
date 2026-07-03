@@ -553,15 +553,19 @@ function describeReplayDiff(prev, cur) {
 }
 
 /* ── UIコンポーネント ── */
+// 🌟 星は clip-path ではなく SVG polygon で描画する。
+//    html2canvas（結果画像の保存）が clip-path 非対応で □ になってしまうため。見た目は同一。
 const Stars = ({star}) => (
   <div style={{display:'flex', gap:2, justifyContent:'center', alignItems:'center'}}>
     {Array.from({length: star}).map((_, i) => (
-      <div key={i} style={{width:10, height:10, clipPath:'polygon(50% 0%,61% 35%,98% 35%,68% 57%,79% 91%,50% 70%,21% 91%,32% 57%,2% 35%,39% 35%)', background:STAR_COLORS[star], filter:`drop-shadow(0 0 3px ${STAR_COLORS[star]})`}}/>
+      <svg key={i} width={10} height={10} viewBox="0 0 100 100" style={{flexShrink:0, filter:`drop-shadow(0 0 3px ${STAR_COLORS[star]})`}}>
+        <polygon points="50,0 61,35 98,35 68,57 79,91 50,70 21,91 32,57 2,35 39,35" fill={STAR_COLORS[star]} />
+      </svg>
     ))}
   </div>
 );
 
-const HexCell = ({ champ, size = 78, onDragStart, onDrop, onMouseEnter, onMouseLeave, onTouchStartDrag, dropType, dropIdx, isGolden }) => {
+const HexCell = ({ champ, size = 78, itemSize = 14, onDragStart, onDrop, onMouseEnter, onMouseLeave, onTouchStartDrag, dropType, dropIdx, isGolden }) => {
   const [over, setOver] = useState(false);
   return (
     <div
@@ -582,15 +586,17 @@ const HexCell = ({ champ, size = 78, onDragStart, onDrop, onMouseEnter, onMouseL
           onTouchStart={onTouchStartDrag ? (e) => { if (onMouseLeave) onMouseLeave(); onTouchStartDrag(e); } : undefined}
           onMouseEnter={(e) => onMouseEnter && onMouseEnter(e, champ)}
           onMouseLeave={onMouseLeave}
+          className="hex-capture"
+          data-img={boardIcon(champ.img)}
           style={{ width: '90%', height: '90%', clipPath: 'polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)', overflow: 'hidden', position: 'relative', zIndex: 1, cursor: onDragStart ? 'grab' : 'default' }}
         >
-          <img src={boardIcon(champ.img)} style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center', pointerEvents: 'none' }} />
-          <div style={{ position: 'absolute', top: 12, left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: 2 }}>
+          <img className="hex-capture-img" src={boardIcon(champ.img)} style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center', pointerEvents: 'none' }} />
+          <div style={{ position: 'absolute', top: itemSize > 15 ? 8 : 12, left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: itemSize > 15 ? 1 : 2 }}>
             {(champ.items || []).map((it, idx) => (
-              <img key={idx} src={getMetaTFTItemUrl(it)} style={{ width: 14, height: 14, border: `1px solid ${it?.type==='artifact' ? 'var(--red)' : (it?.type==='radiant' ? 'var(--gold2)' : 'rgba(255,255,255,0.5)')}`, borderRadius: 2, background: 'black' }} />
+              <img key={idx} src={getMetaTFTItemUrl(it)} style={{ width: itemSize, height: itemSize, border: `1px solid ${it?.type==='artifact' ? 'var(--red)' : (it?.type==='radiant' ? 'var(--gold2)' : 'rgba(255,255,255,0.5)')}`, borderRadius: itemSize > 15 ? 3 : 2, background: 'black' }} />
             ))}
           </div>
-          <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(transparent 55%,rgba(0,0,0,.9))' }} />
+          <div className="hex-capture-shade" style={{ position: 'absolute', inset: 0, background: 'linear-gradient(transparent 55%,rgba(0,0,0,.9))' }} />
           <div style={{ position: 'absolute', bottom: 6, left: 0, right: 0, display: 'flex', justifyContent: 'center' }}><Stars star={champ.star} /></div>
         </div>
       )}
@@ -3281,16 +3287,66 @@ if (count >= 4 && !equippedNames.includes(currentPsionicItems[1].jaName)) {
     dropMsgTimer.current = setTimeout(() => setDropMsg(null), duration);
   }, []);
 
+  // 🌟 html2canvas は clip-path 非対応（六角形→四角になる）ため、
+  //    キャプチャ前に「六角形クリップ済み＋グラデ焼き込み」のPNGをcanvasで生成しておき、
+  //    onclone でクローンDOMの画像だけ差し替える（画面表示は一切変えない）。
+  const buildHexCaptureFixes = async (root) => {
+    const targets = Array.from(root.querySelectorAll('.hex-capture'));
+    return Promise.all(targets.map(t => new Promise(resolve => {
+      const w = t.offsetWidth || 1, h = t.offsetHeight || 1;
+      const im = new Image();
+      im.crossOrigin = 'anonymous';
+      im.onload = () => {
+        try {
+          const S = 2;
+          const cv = document.createElement('canvas');
+          cv.width = w * S; cv.height = h * S;
+          const ctx = cv.getContext('2d');
+          ctx.scale(S, S);
+          // 六角形パス（clip-path: 50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25% と同じ）
+          ctx.beginPath();
+          ctx.moveTo(w * 0.5, 0); ctx.lineTo(w, h * 0.25); ctx.lineTo(w, h * 0.75);
+          ctx.lineTo(w * 0.5, h); ctx.lineTo(0, h * 0.75); ctx.lineTo(0, h * 0.25);
+          ctx.closePath(); ctx.clip();
+          // cover フィットで描画
+          const sc = Math.max(w / im.width, h / im.height);
+          const dw = im.width * sc, dh = im.height * sc;
+          ctx.drawImage(im, (w - dw) / 2, (h - dh) / 2, dw, dh);
+          // 下部グラデーションも焼き込む（DOM側のシェードはクローンで消す）
+          const g = ctx.createLinearGradient(0, 0, 0, h);
+          g.addColorStop(0.55, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,0.9)');
+          ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+          resolve(cv.toDataURL('image/png'));
+        } catch (e) { resolve(null); }   // CORS等で失敗した枠は従来表示のまま
+      };
+      im.onerror = () => resolve(null);
+      im.src = t.dataset.img || '';
+    })));
+  };
+  const applyHexCaptureFixes = (clonedDoc, fixes) => {
+    const cloned = Array.from(clonedDoc.querySelectorAll('.hex-capture'));
+    cloned.forEach((el, i) => {
+      if (!fixes[i]) return;
+      el.style.clipPath = 'none';
+      const img = el.querySelector('.hex-capture-img');
+      if (img) { img.src = fixes[i]; img.style.objectFit = 'fill'; }
+      const shade = el.querySelector('.hex-capture-shade');
+      if (shade) shade.style.display = 'none';   // グラデはcanvasに焼き込み済み
+    });
+  };
+
   // 🌟 キャプチャ処理
   const handleSaveImage = async () => {
     if (!resultRef.current) return;
     setIsSaving(true);
     try {
+      const hexFixes = await buildHexCaptureFixes(resultRef.current);
       // html2canvasでDOMを画像化 (外部画像も読み込めるように useCORS: true を指定)
       const canvas = await html2canvas(resultRef.current, {
         backgroundColor: '#04060e', // 背景色をアプリに合わせる
         scale: 2, // 高画質化
-        useCORS: true 
+        useCORS: true,
+        onclone: (doc) => applyHexCaptureFixes(doc, hexFixes)
       });
       const image = canvas.toDataURL("image/png");
       const link = document.createElement("a");
@@ -3310,10 +3366,12 @@ if (count >= 4 && !equippedNames.includes(currentPsionicItems[1].jaName)) {
     if (!resultRef.current) return;
     setIsSaving(true);
     try {
+      const hexFixes = await buildHexCaptureFixes(resultRef.current);
       const canvas = await html2canvas(resultRef.current, {
         backgroundColor: '#04060e',
         scale: 2,
-        useCORS: true
+        useCORS: true,
+        onclone: (doc) => applyHexCaptureFixes(doc, hexFixes)
       });
       // canvas.toBlob は非同期なので Promise でラップ
       const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
@@ -4824,7 +4882,7 @@ const handleAugmentPick = (aug, historyContext) => {
                 <div style={{transform:'scale(0.8) translateX(-40px)',transformOrigin:'center center'}}>
                   {[0,1,2,3].map(row => (
                     <div key={row} style={{display:'flex',gap:2,marginLeft:row%2===1?30:0}}>
-                      {[0,1,2,3,4,5,6].map(col => <HexCell key={row*7+col} champ={board[row*7+col]} size={60} isGolden={(passiveBuffs.some(b => b.type === 'shield_maiden') && board[row*7+col]?.id === 'leona') || (passiveBuffs.some(b => b.type === 'terminal_velocity') && board[row*7+col]?.id === 'poppy') || (passiveBuffs.some(b => b.type === 'stellar_combo') && board[row*7+col]?.id === 'aatrox') || (passiveBuffs.some(b => b.type === 'big_bang') && (board[row*7+col]?.id === 'miipsy' || board[row*7+col]?.id === 'meepsie')) || (passiveBuffs.some(b => b.type === 'pro_assassin') && board[row*7+col]?.id === 'pyke') || (passiveBuffs.some(b => b.type === 'self_destruction') && board[row*7+col]?.id === 'gragas') || (passiveBuffs.some(b => b.type === 'heat_death') && board[row*7+col]?.id === 'mordekaiser') || (passiveBuffs.some(b => b.type === 'reach_for_the_stars') && board[row*7+col]?.id === 'jax') || (protectorsPactBuff && board[row*7+col]?.id === protectorsPactBuff.champId)} />)}
+                      {[0,1,2,3,4,5,6].map(col => <HexCell key={row*7+col} champ={board[row*7+col]} size={60} itemSize={17} isGolden={(passiveBuffs.some(b => b.type === 'shield_maiden') && board[row*7+col]?.id === 'leona') || (passiveBuffs.some(b => b.type === 'terminal_velocity') && board[row*7+col]?.id === 'poppy') || (passiveBuffs.some(b => b.type === 'stellar_combo') && board[row*7+col]?.id === 'aatrox') || (passiveBuffs.some(b => b.type === 'big_bang') && (board[row*7+col]?.id === 'miipsy' || board[row*7+col]?.id === 'meepsie')) || (passiveBuffs.some(b => b.type === 'pro_assassin') && board[row*7+col]?.id === 'pyke') || (passiveBuffs.some(b => b.type === 'self_destruction') && board[row*7+col]?.id === 'gragas') || (passiveBuffs.some(b => b.type === 'heat_death') && board[row*7+col]?.id === 'mordekaiser') || (passiveBuffs.some(b => b.type === 'reach_for_the_stars') && board[row*7+col]?.id === 'jax') || (protectorsPactBuff && board[row*7+col]?.id === protectorsPactBuff.champId)} />)}
                     </div>
                   ))}
                 </div>
