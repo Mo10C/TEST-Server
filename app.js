@@ -855,6 +855,8 @@ function SeedStatsDrawer({ seed, open, onClose }) {
   const [sharedMode, setSharedMode] = useState(false);
   const [errMsg, setErrMsg] = useState(null);
   const [featured, setFeatured] = useState({ riotIds: [], discordIds: [] }); // ⭐ Firestore側の注目プレイヤーリスト
+  const [rankFilter, setRankFilter] = useState('ALL'); // 📶 ランクフィルター（○○以上）
+  const TIER_ORDER = ['IRON','BRONZE','SILVER','GOLD','PLATINUM','EMERALD','DIAMOND','MASTER','GRANDMASTER','CHALLENGER'];
   const [playerName, setPlayerName] = useState(getStatsPlayerName());
   const [openTopIdx, setOpenTopIdx] = useState(null); // 🏆 展開中のチャレンジャー盤面
 
@@ -876,7 +878,12 @@ function SeedStatsDrawer({ seed, open, onClose }) {
 
   // 集計
   const agg = useMemo(() => {
-    const recs = records.filter(r => !r.cheat);  // チート記録は常に除外（新規は保存もされない）
+    let recs = records.filter(r => !r.cheat);  // チート記録は常に除外（新規は保存もされない）
+    // 📶 ランクフィルター：指定ランク以上の連携済みプレイヤーの記録だけ集計
+    if (rankFilter !== 'ALL') {
+      const min = TIER_ORDER.indexOf(rankFilter);
+      recs = recs.filter(r => r.player && r.player.tier && TIER_ORDER.indexOf(r.player.tier) >= min);
+    }
     const n = recs.length;
     const augMap = new Map(), boardMap = new Map(), benchMap = new Map(), itemMap = new Map();
     const bump = (map, key, meta) => { const cur = map.get(key) || { count: 0, ...meta }; cur.count++; map.set(key, cur); };
@@ -907,7 +914,7 @@ function SeedStatsDrawer({ seed, open, onClose }) {
       });
     return { n, cheatCount: records.filter(r => r.cheat).length,
       augs: sorted(augMap), board: sorted(boardMap), bench: sorted(benchMap), items: sorted(itemMap), topRecs };
-  }, [records, featured]);
+  }, [records, featured, rankFilter]);
 
   const pct = (c) => agg.n ? Math.round((c / agg.n) * 100) : 0;
   const champById = (id) => (typeof CHAMPS !== 'undefined' ? CHAMPS : []).find(c => c.id === id);
@@ -946,6 +953,14 @@ function SeedStatsDrawer({ seed, open, onClose }) {
             onChange={e => { setPlayerName(e.target.value); setStatsPlayerName(e.target.value); }}
             style={{ flex: 1, minWidth: 0, padding: '6px 9px', borderRadius: 7, background: 'rgba(15,23,42,0.9)', color: '#fff', border: '1px solid var(--border)', fontSize: 11.5, fontFamily: 'Noto Sans JP' }} />
           <button onClick={load} disabled={loading} style={{ padding: '6px 10px', borderRadius: 7, background: 'rgba(0,102,204,0.5)', border: '1px solid var(--blue)', color: '#fff', fontSize: 11, fontWeight: 700, cursor: 'pointer', flexShrink: 0, opacity: loading ? 0.5 : 1 }}>🔄 更新</button>
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <span style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.6)', flexShrink: 0 }}>📶 ランク:</span>
+          <select value={rankFilter} onChange={e => setRankFilter(e.target.value)}
+            style={{ flex: 1, minWidth: 0, padding: '6px 9px', borderRadius: 7, background: 'rgba(15,23,42,0.9)', color: '#fff', border: '1px solid var(--border)', fontSize: 11.5, fontFamily: 'Noto Sans JP', cursor: 'pointer' }}>
+            <option value="ALL">全て（連携なし含む）</option>
+            {TIER_ORDER.map(t => (<option key={t} value={t}>{RANK_JA[t] || t} 以上</option>))}
+          </select>
         </div>
         <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.45)' }}>※ チートを使用したゲームの結果は保存・集計されません{agg.cheatCount > 0 ? `（過去のチート記録 ${agg.cheatCount} 件は除外中）` : ''}</div>
       </div>
@@ -994,14 +1009,22 @@ function SeedStatsDrawer({ seed, open, onClose }) {
                         </div>
                         {isOpen && (
                           <div style={{ padding: '10px 8px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, background: 'rgba(4,8,16,0.5)' }}>
-                            {/* 盤面（座標付き記録から再現） */}
+                            {/* 最終レベル・ゴールド（結果画面と同じ情報） */}
+                            {(r.data.level != null || r.data.gold != null) && (
+                              <div style={{ display: 'flex', gap: 10, fontSize: 11, fontWeight: 900 }}>
+                                {r.data.level != null && <span style={{ color: '#7fd0ff' }}>最終 LV {r.data.level}</span>}
+                                {r.data.gold != null && <span style={{ color: 'var(--gold2)' }}>🪙 {r.data.gold}G</span>}
+                              </div>
+                            )}
+                            {/* 盤面（座標＋装備付き記録から結果画面と同じ見た目で再現） */}
                             <div>
                               {[0, 1, 2, 3].map(row => (
-                                <div key={row} style={{ display: 'flex', gap: 1, marginLeft: row % 2 === 1 ? 21 : 0 }}>
+                                <div key={row} style={{ display: 'flex', gap: 1, marginLeft: row % 2 === 1 ? 24 : 0 }}>
                                   {[0, 1, 2, 3, 4, 5, 6].map(col => {
                                     const u = (r.data.board || []).find(x => x.pos === row * 7 + col);
                                     const c = u ? champById(u.id) : null;
-                                    return <HexCell key={col} champ={c ? { ...c, star: u.star } : null} size={42} />;
+                                    const champ = c ? { ...c, star: u.star, items: (u.itemNames || []).map(n => ({ name: n })) } : null;
+                                    return <HexCell key={col} champ={champ} size={48} />;
                                   })}
                                 </div>
                               ))}
@@ -1162,8 +1185,8 @@ const AssetDrawer = ({ isOpen, onClose, setDragSrc, startTouchDrag }) => {
     champs: CHAMPS.filter(c => c.cost === cost)
   }));
 
-  const compItems = ITEMS.filter(it => it.type === 'comp');
-  const allCraftable = Object.values(ITEM_RECIPES);
+  const compItems = ITEMS.filter(it => it.type === 'comp' && !it.hidden);
+  const allCraftable = Object.values(ITEM_RECIPES).filter(it => !it.hidden);
   const realCompleted = allCraftable.filter(it => !it.grantedTrait && it.id !== 'tacticians_crown').map(it => ({...it, type: 'completed'}));
   const realEmblems = allCraftable.filter(it => it.grantedTrait || it.id === 'tacticians_crown').map(it => ({...it, type: 'completed'}));
   const consumablesList = Object.values(CONSUMABLES);
@@ -1626,7 +1649,7 @@ const AugmentScreen = ({ onPick, rng, augmentTierBoost = 0, isNoMoreAugments = f
   const [viewBoard, setViewBoard] = useState(false);
 
   const [augmentSetup] = useState(() => {
-    const pool = [...AUGMENTS_DATA[tier]];
+    const pool = AUGMENTS_DATA[tier].filter(a => !a.hidden);  // 🏷️ 非表示タグ付きは抽選から除外
     // 🌟 抽選枚数を常に一定にする（リロール+1の遭遇の有無で rngAug の消費回数が
     //    変わらないように、常に最大リロール数ぶんの控えを引いておく）
     const RESERVE_REROLLS = 2;                // 現状の最大（基本1 + タロン+1）
@@ -1834,6 +1857,7 @@ function AugmentPickerScreen({ augData, value, onChange, onBack }) {
   for (const t of ['silver', 'gold', 'prismatic']) {
     if (tierFilter !== 'all' && tierFilter !== t) continue;
     for (const a of (augData[t] || [])) {
+      if (a.hidden) continue;  // 🏷️ 非表示は指定リストにも出さない
       if (q && !(a.name || '').toLowerCase().includes(q)) continue;
       lib.push(a);
     }
@@ -2846,7 +2870,8 @@ function App({ seed, onRestart, onNewGame, keyBindings = DEFAULT_KEYBINDINGS, ga
       const hasCheat = !!(gameOverrides && Object.keys(DEFAULT_OVERRIDES).some(k => gameOverrides[k] != null));
       if (hasCheat) { setShowSeedStats(true); return; }  // 🌟 チート使用時は記録を一切貯めない（閲覧のみ）
       // 盤面は座標(pos)付きで保存 → チャレンジャーの盤面をそのまま再現表示できる
-      const pickBoard = (arr) => arr.map((u, pos) => (u && !u.isAnvil) ? { id: u.id, jaName: u.jaName, star: u.star || 1, pos } : null).filter(Boolean);
+      const pickBoard = (arr) => arr.map((u, pos) => (u && !u.isAnvil) ? { id: u.id, jaName: u.jaName, star: u.star || 1, pos,
+        itemNames: (u.items || []).map(it => it && it.name).filter(Boolean) } : null).filter(Boolean);
       const pickUnits = (arr) => arr.filter(u => u && !u.isAnvil).map(u => ({ id: u.id, jaName: u.jaName, star: u.star || 1 }));
       const acctPlayer = accountComplete(account) ? {  // 🌟 Riot+Discord両方の連携成立時のみ記録に紐付く
         riotId: account.riot ? account.riot.riotId : null,
@@ -2864,6 +2889,7 @@ function App({ seed, onRestart, onNewGame, keyBindings = DEFAULT_KEYBINDINGS, ga
         player: acctPlayer,
         cheat: hasCheat,
         data: {
+          level, gold,
           augments: augments.map(a => ({ name: a.name, tier: a.tier })),
           board: pickBoard(board),
           bench: pickUnits(bench),
@@ -3217,19 +3243,19 @@ if (count >= 4 && !equippedNames.includes(currentPsionicItems[1].jaName)) {
     let pool = [];
     let count = 4;
     if (anvilType === 'component') {
-      pool = ITEMS.filter(it => it.type === 'comp' && it.id !== 'spatula' && it.id !== 'pan');
+      pool = ITEMS.filter(it => it.type === 'comp' && !it.hidden && it.id !== 'spatula' && it.id !== 'pan');
     } else if (anvilType === 'completed') {
       const recipes = Object.values(ITEM_RECIPES);
       pool = recipes.filter(r => !r.grantedTrait && r.id !== 'tacticians_crown').map(r => ({...r, type: 'completed'}));
     } else if (anvilType === 'artifact') {
-      pool = ARTIFACTS;
+      pool = ARTIFACTS.filter(a => !a.hidden);
     } else if (anvilType === 'god_artifact') {
-      pool = ARTIFACTS.filter(a => a.jaName.includes('の'));
+      pool = ARTIFACTS.filter(a => !a.hidden && a.jaName.includes('の'));
     } else if (anvilType === 'radiant') {
       pool = RADIANT_ITEMS;
       count = pool.length;
     } else if (anvilType === 'duplication') {
-      pool = ITEMS.filter(it => it.type === 'comp' && it.id !== 'spatula' && it.id !== 'pan');
+      pool = ITEMS.filter(it => it.type === 'comp' && !it.hidden && it.id !== 'spatula' && it.id !== 'pan');
       count = 3;
     }
     const shuffled = shuffleArray(pool, rngMisc).slice(0, count);
@@ -3810,7 +3836,7 @@ useEffect(() => {
     drops.forEach((dropType, i) => {
       const cfg = cfgList[i] || null;
       if (dropType === 'comp') {
-        const comps = ITEMS.filter(it => it.type === 'comp' && it.id !== 'spatula' && it.id !== 'pan');
+        const comps = ITEMS.filter(it => it.type === 'comp' && !it.hidden && it.id !== 'spatula' && it.id !== 'pan');
         let availableComps = comps.filter(c => !droppedComps.includes(c.id) && !newlyDroppedIds.includes(c.id));
         
         if (availableComps.length === 0) {
@@ -4071,7 +4097,7 @@ const handleAugmentPick = (aug, historyContext) => {
   // 🌟 augデータの中に history オブジェクトとして文脈データをまるごと保存
   setAugments(prev => [...prev, { ...aug, history: historyContext }]);
   setAugmentTierBoost(0);
-  aug.effect({ gold, level, xp }, rngAug, augmentHelpers);
+  if (typeof aug.effect === 'function') aug.effect({ gold, level, xp }, rngAug, augmentHelpers);  // 🏷️ エディタ新規追加分はeffectなし（表示のみ）
   setShowAugment(false);
 
   // 通知メッセージを画像付きにする
@@ -4088,7 +4114,7 @@ const handleAugmentPick = (aug, historyContext) => {
   useEffect(() => { hDropRef.current = hDrop; });
 
   const debugDropAllItems = () => {
-    const allComps = ITEMS.filter(it => it.type === 'comp');
+    const allComps = ITEMS.filter(it => it.type === 'comp' && !it.hidden);
     const allEmblems = Object.values(ITEM_RECIPES)
       .filter(recipe => recipe.grantedTrait || recipe.id === 'tacticians_crown')
       .map(recipe => ({ ...recipe, type: 'completed' }));
@@ -4292,7 +4318,7 @@ const handleAugmentPick = (aug, historyContext) => {
                 isTGGenerated: true 
               };
               unit.items.push(randomFullItem);
-              const comps = ITEMS.filter(it => it.type === 'comp' && it.id !== 'spatula' && it.id !== 'pan');
+              const comps = ITEMS.filter(it => it.type === 'comp' && !it.hidden && it.id !== 'spatula' && it.id !== 'pan');
               const randomCompItem = { 
                 ...comps[Math.floor(rngMisc() * comps.length)],
                 isTGGenerated: true 
