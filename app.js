@@ -241,6 +241,34 @@ async function consumeDiscordToken() {
   } catch (e) { return null; }
 }
 
+// 🖼️ オーグメント名からメタ情報（imgName等）を解決（全ティア横断）
+const getAugmentMetaByName = (name) => {
+  if (typeof AUGMENTS_DATA === 'undefined') return null;
+  for (const t of ['silver', 'gold', 'prismatic']) {
+    const f = (AUGMENTS_DATA[t] || []).find(a => a.name === name);
+    if (f) return f;
+  }
+  return null;
+};
+// 🇯🇵 アイテム英名→日本語名（ITEM_JAの大文字小文字ゆれ・紋章の欠落に対応）
+const resolveItemJa = (name) => {
+  if (!name) return '';
+  const direct = getJaName(name);
+  if (direct && direct !== name) return direct;
+  // 大文字小文字を無視して ITEM_JA を検索
+  if (typeof ITEM_JA !== 'undefined') {
+    const k = Object.keys(ITEM_JA).find(x => x.toLowerCase() === name.toLowerCase());
+    if (k) return ITEM_JA[k];
+  }
+  // 「○○ Emblem」→ TRAIT_JA から「○○の紋章」を生成
+  if (/emblem$/i.test(name) && typeof TRAIT_JA !== 'undefined') {
+    const trait = name.replace(/\s*emblem$/i, '').trim();
+    const tk = Object.keys(TRAIT_JA).find(x => x.toLowerCase() === trait.toLowerCase());
+    if (tk) return `${TRAIT_JA[tk]}の紋章`;
+  }
+  return name;
+};
+
 // 🏷️ エディタで非表示（旧セット等）にしたチャンピオンをシム全体から除外
 //    ショップ・ドロップ・指定リストなど全ての CHAMPS 参照に一括で効く
 if (typeof CHAMPS !== 'undefined') {
@@ -587,10 +615,10 @@ const HexCell = ({ champ, size = 78, itemSize = 14, onDragStart, onDrop, onMouse
           onMouseEnter={(e) => onMouseEnter && onMouseEnter(e, champ)}
           onMouseLeave={onMouseLeave}
           className="hex-capture"
-          data-img={boardIcon(champ.img)}
+          data-img={champ.isAnvil ? champ.img : boardIcon(champ.img)}
           style={{ width: '90%', height: '90%', clipPath: 'polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)', overflow: 'hidden', position: 'relative', zIndex: 1, cursor: onDragStart ? 'grab' : 'default' }}
         >
-          <img className="hex-capture-img" src={boardIcon(champ.img)} style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center', pointerEvents: 'none' }} />
+          <img className="hex-capture-img" src={champ.isAnvil ? champ.img : boardIcon(champ.img)} style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center', pointerEvents: 'none' }} />
           <div style={{ position: 'absolute', top: itemSize > 15 ? 8 : 12, left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: itemSize > 15 ? 1 : 2 }}>
             {(champ.items || []).map((it, idx) => (
               <img key={idx} src={getMetaTFTItemUrl(it)} style={{ width: itemSize, height: itemSize, border: `1px solid ${it?.type==='artifact' ? 'var(--red)' : (it?.type==='radiant' ? 'var(--gold2)' : 'rgba(255,255,255,0.5)')}`, borderRadius: itemSize > 15 ? 3 : 2, background: 'black' }} />
@@ -689,7 +717,17 @@ function ReplayViewer({ history, seed, onClose }) {
           {frame.freeRerolls > 0 && <span style={{ color: '#7fd0ff' }}>🎟️ 無料リロール×{frame.freeRerolls}</span>}
           {frame.augments.length > 0 && (
             <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-              {frame.augments.map((a, i) => (<span key={i} style={{ color: TIER_COLORS[a.tier], fontSize: 11.5 }}>{a.icon || '✨'}{a.name}</span>))}
+              {frame.augments.map((a, i) => {
+                const meta = getAugmentMetaByName(a.name);
+                return (
+                  <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: TIER_COLORS[a.tier], fontSize: 11.5 }}>
+                    {meta && meta.imgName
+                      ? <img src={getAugmentIconUrl(meta)} style={{ width: 18, height: 18, borderRadius: 4, border: '1px solid rgba(148,163,184,0.5)', background: '#0b1622' }} />
+                      : (a.icon || '✨')}
+                    {a.name}
+                  </span>
+                );
+              })}
             </span>
           )}
         </div>
@@ -862,6 +900,11 @@ function AccountScreen({ account, onChangeAccount, onBack }) {
 
 /* ── 📊 シード統計ドロワー（結果画面の右から出る） ── */
 function SeedStatsDrawer({ seed, open, onClose }) {
+  // 🌗 テーマ追従パレット（body.dark の有無で切替。開くたびに評価される）
+  const isDark = typeof document !== 'undefined' && document.body.classList.contains('dark');
+  const C = isDark
+    ? { bg: C.bg,  text: '#fff',     dim: C.dim, row: C.row, input: C.input, line: C.line, deep: C.deep }
+    : { bg: 'rgba(248,250,252,0.99)', text: '#1e293b', dim: '#64748b',                row: '#eef2f7',            input: '#ffffff',            line: '#cbd5e1',                deep: '#e2e8f0' };
   const [loading, setLoading] = useState(false);
   const [records, setRecords] = useState([]);
   const [sharedMode, setSharedMode] = useState(false);
@@ -946,12 +989,12 @@ function SeedStatsDrawer({ seed, open, onClose }) {
   const pct = (c) => agg.n ? Math.round((c / agg.n) * 100) : 0;
   const champById = (id) => (typeof CHAMPS !== 'undefined' ? CHAMPS : []).find(c => c.id === id);
   const barRow = (key, iconEl, labelEl, count) => (
-    <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 6px', borderRadius: 7, background: 'rgba(15,23,42,0.5)', position: 'relative', overflow: 'hidden' }}>
+    <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 6px', borderRadius: 7, background: C.row, position: 'relative', overflow: 'hidden' }}>
       <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: pct(count) + '%', background: 'rgba(212,175,55,0.14)', pointerEvents: 'none' }} />
       {iconEl}
-      <div style={{ flex: 1, minWidth: 0, fontSize: 11.5, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', zIndex: 1 }}>{labelEl}</div>
+      <div style={{ flex: 1, minWidth: 0, fontSize: 11.5, fontWeight: 700, color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', zIndex: 1 }}>{labelEl}</div>
       <div style={{ fontSize: 11.5, fontWeight: 900, color: 'var(--gold2)', zIndex: 1, flexShrink: 0 }}>{pct(count)}%</div>
-      <div style={{ fontSize: 9.5, color: 'rgba(255,255,255,0.45)', zIndex: 1, flexShrink: 0 }}>({count}/{agg.n})</div>
+      <div style={{ fontSize: 9.5, color: C.dim, zIndex: 1, flexShrink: 0 }}>({count}/{agg.n})</div>
     </div>
   );
   const secTitle = (t) => (<div style={{ fontSize: 11, fontWeight: 900, color: 'var(--gold2)', letterSpacing: 1, margin: '12px 0 6px', borderBottom: '1px solid rgba(148,163,184,0.3)', paddingBottom: 4 }}>{t}</div>);
@@ -959,50 +1002,50 @@ function SeedStatsDrawer({ seed, open, onClose }) {
 
   return (
     <div style={{ position: 'fixed', top: 0, right: 0, height: '100vh', width: 'min(400px, 94vw)', zIndex: 9600,
-      background: 'rgba(8,16,26,0.97)', borderLeft: '1px solid var(--border)', boxShadow: '-12px 0 40px rgba(0,0,0,0.6)',
+      background: C.bg, borderLeft: '1px solid var(--border)', boxShadow: '-12px 0 40px rgba(0,0,0,0.6)',
       transform: open ? 'translateX(0)' : 'translateX(105%)', transition: 'transform 0.3s cubic-bezier(0.4,0,0.2,1)',
       display: 'flex', flexDirection: 'column' }}>
 
       {/* ヘッダー */}
       <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexShrink: 0 }}>
         <div>
-          <div style={{ fontFamily: 'Orbitron', fontSize: 14, fontWeight: 900, color: '#fff', letterSpacing: 2 }}>📊 シード統計</div>
-          <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)', marginTop: 2 }}>SEED: {seed} ・ {sharedMode ? '🌐 共有データ' : '💾 このブラウザの記録のみ'}</div>
+          <div style={{ fontFamily: 'Orbitron', fontSize: 14, fontWeight: 900, color: C.text, letterSpacing: 2 }}>📊 みんなの盤面</div>
+          <div style={{ fontSize: 10, color: C.dim, marginTop: 2 }}>SEED: {seed} ・ {sharedMode ? '🌐 共有データ' : '💾 このブラウザの記録のみ'}</div>
         </div>
-        <button onClick={onClose} style={{ width: 30, height: 30, borderRadius: 7, background: 'rgba(220,53,69,0.6)', border: '1px solid var(--red)', color: '#fff', fontWeight: 900, fontSize: 14, cursor: 'pointer', flexShrink: 0 }}>✕</button>
+        <button onClick={onClose} style={{ width: 30, height: 30, borderRadius: 7, background: 'rgba(220,53,69,0.6)', border: '1px solid var(--red)', color: C.text, fontWeight: 900, fontSize: 14, cursor: 'pointer', flexShrink: 0 }}>✕</button>
       </div>
 
       {/* ツールバー */}
       <div style={{ padding: '10px 16px', borderBottom: '1px solid rgba(148,163,184,0.25)', display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0 }}>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <span style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.6)', flexShrink: 0 }}>プレイヤー名:</span>
+          <span style={{ fontSize: 10.5, color: C.dim, flexShrink: 0 }}>プレイヤー名:</span>
           <input value={playerName} placeholder="名無し"
             onChange={e => { setPlayerName(e.target.value); setStatsPlayerName(e.target.value); }}
-            style={{ flex: 1, minWidth: 0, padding: '6px 9px', borderRadius: 7, background: 'rgba(15,23,42,0.9)', color: '#fff', border: '1px solid var(--border)', fontSize: 11.5, fontFamily: 'Noto Sans JP' }} />
-          <button onClick={load} disabled={loading} style={{ padding: '6px 10px', borderRadius: 7, background: 'rgba(0,102,204,0.5)', border: '1px solid var(--blue)', color: '#fff', fontSize: 11, fontWeight: 700, cursor: 'pointer', flexShrink: 0, opacity: loading ? 0.5 : 1 }}>🔄 更新</button>
+            style={{ flex: 1, minWidth: 0, padding: '6px 9px', borderRadius: 7, background: C.input, color: C.text, border: '1px solid var(--border)', fontSize: 11.5, fontFamily: 'Noto Sans JP' }} />
+          <button onClick={load} disabled={loading} style={{ padding: '6px 10px', borderRadius: 7, background: 'rgba(0,102,204,0.5)', border: '1px solid var(--blue)', color: C.text, fontSize: 11, fontWeight: 700, cursor: 'pointer', flexShrink: 0, opacity: loading ? 0.5 : 1 }}>🔄 更新</button>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <span style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.6)', flexShrink: 0 }}>📶 ランク:</span>
+          <span style={{ fontSize: 10.5, color: C.dim, flexShrink: 0 }}>📶 ランク:</span>
           <select value={rankFilter} onChange={e => setRankFilter(e.target.value)}
-            style={{ flex: 1, minWidth: 0, padding: '6px 9px', borderRadius: 7, background: 'rgba(15,23,42,0.9)', color: '#fff', border: '1px solid var(--border)', fontSize: 11.5, fontFamily: 'Noto Sans JP', cursor: 'pointer' }}>
+            style={{ flex: 1, minWidth: 0, padding: '6px 9px', borderRadius: 7, background: C.input, color: C.text, border: '1px solid var(--border)', fontSize: 11.5, fontFamily: 'Noto Sans JP', cursor: 'pointer' }}>
             <option value="ALL">全て（連携なし含む）</option>
             {TIER_ORDER.map(t => (<option key={t} value={t}>{RANK_JA[t] || t} 以上</option>))}
           </select>
         </div>
-        <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.45)' }}>※ チートを使用したゲームの結果は保存・集計されません{agg.cheatCount > 0 ? `（過去のチート記録 ${agg.cheatCount} 件は除外中）` : ''}</div>
+        <div style={{ fontSize: 10, color: C.dim }}>※ チートを使用したゲームの結果は保存・集計されません{agg.cheatCount > 0 ? `（過去のチート記録 ${agg.cheatCount} 件は除外中）` : ''}</div>
       </div>
 
       {/* 本文 */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '10px 16px 20px' }}>
         {loading ? (
-          <div style={{ textAlign: 'center', color: 'rgba(255,255,255,0.5)', fontSize: 12, padding: 30 }}>読み込み中…</div>
+          <div style={{ textAlign: 'center', color: C.dim, fontSize: 12, padding: 30 }}>読み込み中…</div>
         ) : agg.n === 0 ? (
-          <div style={{ textAlign: 'center', color: 'rgba(255,255,255,0.5)', fontSize: 12, padding: 30, lineHeight: 1.8 }}>
+          <div style={{ textAlign: 'center', color: C.dim, fontSize: 12, padding: 30, lineHeight: 1.8 }}>
             このシードの記録はまだありません。<br />ゲームを最後までプレイすると自動で記録されます。
           </div>
         ) : (
           <React.Fragment>
-            <div style={{ fontSize: 12, fontWeight: 900, color: '#fff', textAlign: 'center', padding: '8px 0', background: 'rgba(212,175,55,0.12)', borderRadius: 8, border: '1px solid rgba(212,175,55,0.4)' }}>
+            <div style={{ fontSize: 12, fontWeight: 900, color: C.text, textAlign: 'center', padding: '8px 0', background: 'rgba(212,175,55,0.12)', borderRadius: 8, border: '1px solid rgba(212,175,55,0.4)' }}>
               🎮 {agg.n} 回のプレイデータ
             </div>
             {errMsg && <div style={{ fontSize: 10, color: '#ff9f43', marginTop: 6 }}>⚠ 共有データの取得に失敗（ローカル表示中）: {errMsg}</div>}
@@ -1010,7 +1053,7 @@ function SeedStatsDrawer({ seed, open, onClose }) {
             <React.Fragment>
                 {secTitle('🏆 チャレンジャー・注目選手')}
                 {agg.topRecs.length === 0 && (
-                  <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', padding: '4px 2px' }}>
+                  <div style={{ fontSize: 11, color: C.dim, padding: '4px 2px' }}>
                     このシードにはまだチャレンジャー・注目選手の記録がありません
                   </div>
                 )}
@@ -1019,14 +1062,14 @@ function SeedStatsDrawer({ seed, open, onClose }) {
                     const p = r.player;
                     const isOpen = openTopIdx === ti;
                     return (
-                      <div key={ti} style={{ border: `1px solid ${isOpen ? 'var(--gold2)' : 'rgba(148,163,184,0.35)'}`, borderRadius: 9, overflow: 'hidden' }}>
+                      <div key={ti} style={{ border: `1px solid ${isOpen ? 'var(--gold2)' : C.line}`, borderRadius: 9, overflow: 'hidden' }}>
                         <div onClick={() => setOpenTopIdx(isOpen ? null : ti)}
                           style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 9px', cursor: 'pointer', background: 'rgba(212,175,55,0.10)' }}>
                           {p.discordAvatar
                             ? <img src={p.discordAvatar} style={{ width: 26, height: 26, borderRadius: '50%', border: '1px solid var(--gold2)', flexShrink: 0 }} />
                             : <span style={{ fontSize: 15 }}>🏆</span>}
                           <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontSize: 12, fontWeight: 900, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name || r.user} の盤面</div>
+                            <div style={{ fontSize: 12, fontWeight: 900, color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name || r.user} の盤面</div>
                             <div style={{ fontSize: 9.5, color: 'var(--gold2)', fontWeight: 700 }}>
                             {p.tier === 'CHALLENGER'
                               ? `チャレンジャー ${p.lp != null ? p.lp + 'LP' : ''}`
@@ -1036,10 +1079,10 @@ function SeedStatsDrawer({ seed, open, onClose }) {
                             {r.cheat ? ' ・チート使用' : ''}
                           </div>
                           </div>
-                          <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', flexShrink: 0 }}>{isOpen ? '▲ 閉じる' : '▼ 見る'}</span>
+                          <span style={{ fontSize: 11, color: C.dim, flexShrink: 0 }}>{isOpen ? '▲ 閉じる' : '▼ 見る'}</span>
                         </div>
                         {isOpen && (
-                          <div style={{ padding: '10px 8px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, background: 'rgba(4,8,16,0.5)' }}>
+                          <div style={{ padding: '10px 8px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, background: C.deep }}>
                             {/* 最終レベル・ゴールド（結果画面と同じ情報） */}
                             {(r.data.level != null || r.data.gold != null) && (
                               <div style={{ display: 'flex', gap: 10, fontSize: 11, fontWeight: 900 }}>
@@ -1060,10 +1103,36 @@ function SeedStatsDrawer({ seed, open, onClose }) {
                                 </div>
                               ))}
                             </div>
+                            {/* ベンチ */}
+                            {(r.data.bench || []).length > 0 && (
+                              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+                                <div style={{ fontSize: 8.5, color: C.dim, fontFamily: 'Orbitron', letterSpacing: 1 }}>BENCH</div>
+                                <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', justifyContent: 'center' }}>
+                                  {r.data.bench.map((u, k) => {
+                                    const c = champById(u.id);
+                                    return (
+                                      <div key={k} style={{ width: 30, height: 30, borderRadius: 5, overflow: 'hidden', position: 'relative', border: `1px solid ${c ? COST_COLORS[c.cost] : 'var(--border)'}`, background: '#0b1622', flexShrink: 0 }} title={u.jaName}>
+                                        {c && <img src={boardIcon(c.img)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
+                                        <div style={{ position: 'absolute', bottom: -1, left: 0, right: 0, display: 'flex', justifyContent: 'center', transform: 'scale(0.5)', transformOrigin: 'bottom' }}><Stars star={u.star} /></div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+                            {/* アイテム欄（手持ち） */}
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+                              <div style={{ fontSize: 8.5, color: C.dim, fontFamily: 'Orbitron', letterSpacing: 1 }}>ITEMS</div>
+                              <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', justifyContent: 'center' }}>
+                                {(r.data.inventoryNames || []).length > 0 ? r.data.inventoryNames.map((n, k) => (
+                                  <img key={k} src={getMetaTFTItemUrl(n)} title={resolveItemJa(n)} style={{ width: 22, height: 22, borderRadius: 4, border: '1px solid var(--gold)', background: '#1e293b', flexShrink: 0 }} />
+                                )) : <span style={{ fontSize: 9.5, color: C.dim }}>{r.data.inventoryNames ? 'なし' : '（この記録には未保存）'}</span>}
+                              </div>
+                            </div>
                             {(r.data.augments || []).length > 0 && (
                               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center' }}>
                                 {r.data.augments.map((a, k) => (
-                                  <span key={k} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, fontWeight: 700, padding: '2px 7px 2px 3px', borderRadius: 10, background: 'rgba(15,23,42,0.8)', border: '1px solid rgba(148,163,184,0.4)', color: (typeof TIER_COLORS !== 'undefined' && TIER_COLORS[a.tier]) || '#fff' }}>
+                                  <span key={k} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, fontWeight: 700, padding: '2px 7px 2px 3px', borderRadius: 10, background: C.input, border: '1px solid rgba(148,163,184,0.4)', color: (typeof TIER_COLORS !== 'undefined' && TIER_COLORS[a.tier]) || '#fff' }}>
                                     {augIconEl(a.name, 18)}{a.name}
                                   </span>
                                 ))}
@@ -1079,7 +1148,7 @@ function SeedStatsDrawer({ seed, open, onClose }) {
 
             {secTitle('✨ オーグメント取得率')}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {agg.augs.length === 0 ? <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>データなし</span> :
+              {agg.augs.length === 0 ? <span style={{ fontSize: 11, color: C.dim }}>データなし</span> :
                 agg.augs.map(a => barRow('aug_' + a.name,
                   augIconEl(a.name, 24),
                   <span style={{ color: (typeof TIER_COLORS !== 'undefined' && TIER_COLORS[a.tier]) || '#fff' }}>{a.name}</span>,
@@ -1088,7 +1157,7 @@ function SeedStatsDrawer({ seed, open, onClose }) {
 
             {secTitle('♟️ 盤面チャンピオン率（★別）')}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {agg.board.length === 0 ? <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>データなし</span> :
+              {agg.board.length === 0 ? <span style={{ fontSize: 11, color: C.dim }}>データなし</span> :
                 agg.board.map(u => {
                   const c = champById(u.id);
                   return barRow('b_' + u.id + '_' + u.star,
@@ -1100,7 +1169,7 @@ function SeedStatsDrawer({ seed, open, onClose }) {
 
             {secTitle('🪑 ベンチのコマ（★別）')}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {agg.bench.length === 0 ? <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>データなし</span> :
+              {agg.bench.length === 0 ? <span style={{ fontSize: 11, color: C.dim }}>データなし</span> :
                 agg.bench.map(u => {
                   const c = champById(u.id);
                   return barRow('be_' + u.id + '_' + u.star,
@@ -1112,10 +1181,10 @@ function SeedStatsDrawer({ seed, open, onClose }) {
 
             {secTitle('🗡️ 盤面の完成アイテム')}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {agg.items.length === 0 ? <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>データなし</span> :
+              {agg.items.length === 0 ? <span style={{ fontSize: 11, color: C.dim }}>データなし</span> :
                 agg.items.map(it => barRow('it_' + it.name,
                   <img src={getMetaTFTItemUrl(it.name)} style={{ width: 24, height: 24, borderRadius: 5, border: '1px solid var(--gold)', flexShrink: 0, zIndex: 1, background: '#1e293b' }} />,
-                  <span>{getJaName(it.name)}</span>,
+                  <span>{resolveItemJa(it.name)}</span>,
                   it.count))}
             </div>
           </React.Fragment>
@@ -2645,6 +2714,12 @@ function Main() {
   const [keyBindings, setKeyBindings] = useState(loadKeyBindings); // 🌟 キー割り当て
   const [gameOverrides, setGameOverrides] = useState(loadOverrides); // 🌟 ゲーム内設定の手動オーバーライド
   const [account, setAccount] = useState(loadAccount);              // 👤 連携アカウント
+  // 🌗 テーマ（ライト/ダーク）。body.dark クラスで styles.css のCSS変数を一括切替
+  const [theme, setTheme] = useState(() => { try { return localStorage.getItem('tft_sim_theme') || 'light'; } catch (e) { return 'light'; } });
+  useEffect(() => {
+    document.body.classList.toggle('dark', theme === 'dark');
+    try { localStorage.setItem('tft_sim_theme', theme); } catch (e) {}
+  }, [theme]);
   const [remoteAdmins, setRemoteAdmins] = useState(null);       // Firestore側の管理者リスト
   useEffect(() => { fetchSimMeta().then(m => setRemoteAdmins(m.admins)); }, []);
   const changeAccount = (a) => {
@@ -2727,6 +2802,15 @@ function Main() {
             onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.background = 'rgba(15,23,42,0.8)'; }}
           >
             👤 アカウント連携{account && (account.riot || account.discord) ? ' ✓' : ''}
+          </button>
+          <button 
+            className="menu-btn" 
+            style={{ width:220, background:'rgba(15,23,42,0.8)', color:'white', borderColor:'var(--border)', boxShadow:'0 10px 30px rgba(0,0,0,0.5)', transition:'all 0.2s ease', cursor:'pointer' }} 
+            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+            onMouseEnter={e => { e.currentTarget.style.transform = 'scale(1.05)'; e.currentTarget.style.background = 'rgba(30,45,74,0.9)'; }}
+            onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.background = 'rgba(15,23,42,0.8)'; }}
+          >
+            {theme === 'dark' ? '☀️ ライトモードに切替' : '🌙 ダークモードに切替'}
           </button>
           {isAdminAccount(account, remoteAdmins) && (
             <button 
@@ -2930,6 +3014,8 @@ function App({ seed, onRestart, onNewGame, keyBindings = DEFAULT_KEYBINDINGS, ga
           // 盤面ユニットに装備中の完成系アイテム（素材・消耗品を除く）
           items: board.filter(u => u && !u.isAnvil).flatMap(u => u.items || [])
             .filter(it => it && it.type !== 'comp' && it.type !== 'consumable').map(it => it.name),
+          // アイテム欄（手持ち）
+          inventoryNames: inventory.filter(it => it && it.name).map(it => it.name),
         },
       };
       try { await submitSeedRecord(record); } catch (e) {}  // 記録完了を待ってから開く（直後の集計に反映させる）

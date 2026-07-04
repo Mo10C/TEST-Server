@@ -335,7 +335,11 @@ function renderRecords() {
         <td style="font-family:Rajdhani;font-weight:700;color:var(--blue)">${esc(r.seed)} <span style="opacity:.5">${r.src||''}</span></td>
         <td>${esc(r.user)}</td>
         <td>${r.cheat ? '<span class="badge cheat">チート</span>' : '<span class="badge clean">通常</span>'}</td>
-        <td>${(d.augments||[]).map(a=>`<span class="pill tier-${esc(a.tier)}">${esc(a.name)}</span>`).join('')}</td>
+        <td>${(d.augments||[]).map(a=>{
+          const im = (window.__augImgMap||{})[a.name];
+          const img = im ? `<img src="https://cdn.metatft.com/cdn-cgi/image/width=64,format=webp/file/metatft/augments/${esc(im)}.png" style="width:16px;height:16px;border-radius:3px;vertical-align:-3px;margin-right:2px" onerror="this.style.display='none'">` : '';
+          return `<span class="pill tier-${esc(a.tier)}">${img}${esc(a.name)}</span>`;
+        }).join('')}</td>
         <td>${fmtUnits(d.board)}</td>
         <td>${fmtUnits(d.bench)}</td>
         <td>${(d.items||[]).map(n=>`<span class="pill">${esc(n)}</span>`).join('')}</td>
@@ -541,7 +545,11 @@ function loadAugText(text) {
     newName: a.name, newTier: a.tier, newDesc: a.desc || '', newImg: a.imgName || '', isAdded: true, addedRef: a }));
   document.getElementById('aug-dl').disabled = false;
   document.getElementById('aug-add').disabled = false;
+  // 記録タブのオーグメント画像用マップ（名前→imgName）
+  window.__augImgMap = {};
+  augEntries.forEach(a => { if (a.imgName) { window.__augImgMap[a.name] = a.imgName; window.__augImgMap[a.newName] = a.imgName; } });
   renderAugs();
+  if (typeof records !== 'undefined' && records.length) renderRecords();  // 記録が先に読めていたら画像付きで再描画
 }
 document.getElementById('aug-file').addEventListener('change', async ev => {
   const f = ev.target.files[0]; if (f) { loadAugText(await f.text()); document.getElementById('aug-status').textContent = `📂 ${f.name} を読み込みました`; }
@@ -750,15 +758,7 @@ function downloadItems() {
   showMsg('data-items.js をダウンロードしました');
 }
 
-/* 起動時：3ファイル＋記録データ＋ユーザー一覧を自動読み込み */
-autoLoadDataFile('data-champions.js', 'champ-status', loadChampText);
-autoLoadDataFile('data-augments.js', 'aug-status', loadAugText);
-autoLoadDataFile('data-items.js', 'item-status', loadItemText);
-(function autoStart() {
-  const c = fbCfg();
-  if (c.apiKey && c.projectId) { loadShared(); loadUsers(); }   // 共有設定があれば全部読む
-  else { loadLocal(); }                                          // なければローカル記録だけ
-})();
+
 
 /* ═══════ 👥 ユーザー一覧（sim_users） ═══════ */
 const RANK_JA2 = { IRON:'アイアン', BRONZE:'ブロンズ', SILVER:'シルバー', GOLD:'ゴールド', PLATINUM:'プラチナ', EMERALD:'エメラルド', DIAMOND:'ダイヤモンド', MASTER:'マスター', GRANDMASTER:'グランドマスター', CHALLENGER:'チャレンジャー' };
@@ -913,6 +913,19 @@ function renderSeedChips() {
       onclick="document.getElementById('seed-filter').value='${esc(seed)}';renderRecords()">${esc(seed)} <span style="opacity:.6">×${n}</span></span>`).join('')
     + (cur ? ` <span class="pill" style="cursor:pointer;padding:5px 10px" onclick="document.getElementById('seed-filter').value='';renderRecords()">✕ 絞り込み解除</span>` : '');
 }
+
+/* ═══════ 🚀 起動時の自動読み込み（必ず全定義の後＝スクリプト最末尾で実行） ═══════
+   以前は中腹にあり、後方で宣言される let 変数が初期化前（TDZ）で一部が黙って失敗していた */
+window.addEventListener('load', () => {
+  try {
+    autoLoadDataFile('data-champions.js', 'champ-status', loadChampText);
+    autoLoadDataFile('data-augments.js', 'aug-status', loadAugText);
+    autoLoadDataFile('data-items.js', 'item-status', loadItemText);
+    const c = fbCfg();
+    if (c.apiKey && c.projectId) { loadShared(); loadUsers(); }   // 共有設定があれば全部読む
+    else { loadLocal(); }                                          // なければローカル記録だけ
+  } catch (err) { showMsg('自動読み込みでエラー: ' + err.message, true); }
+});
 </script>
 </body>
 </html>
