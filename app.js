@@ -903,7 +903,7 @@ function SeedStatsDrawer({ seed, open, onClose }) {
   // 🌗 テーマ追従パレット（body.dark の有無で切替。開くたびに評価される）
   const isDark = typeof document !== 'undefined' && document.body.classList.contains('dark');
   const C = isDark
-    ? { bg: C.bg,  text: '#fff',     dim: C.dim, row: C.row, input: C.input, line: C.line, deep: C.deep }
+    ? { bg: 'rgba(11,19,32,0.99)',   text: '#fff',    dim: '#7d8aa5',                row: '#1c2a44',            input: '#101c33',            line: '#2a3a55',                deep: '#0b1320' }
     : { bg: 'rgba(248,250,252,0.99)', text: '#1e293b', dim: '#64748b',                row: '#eef2f7',            input: '#ffffff',            line: '#cbd5e1',                deep: '#e2e8f0' };
   const [loading, setLoading] = useState(false);
   const [records, setRecords] = useState([]);
