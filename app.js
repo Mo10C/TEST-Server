@@ -63,6 +63,68 @@ function loadOverrides() {
   } catch (e) {}
   return { ...DEFAULT_OVERRIDES };
 }
+
+/* ── 🔗 ゲーム内設定（オーバーライド）の共有 ──
+   設定を base64url にエンコードして共有URLの ?ov= に埋め込む。
+   同じ seed + 同じ ov なら誰が開いても完全に同じ初期セットアップになる。
+   統計は「seed~設定ハッシュ」を統計用シードとして別枠で集計するため、
+   設定変更ありのゲーム同士でだけ結果が比較される（素のシードは汚れない）。 */
+function cleanOverrides(o) {
+  const out = {};
+  if (!o) return out;
+  Object.keys(DEFAULT_OVERRIDES).forEach(k => { if (o[k] != null) out[k] = o[k]; });
+  return out;
+}
+function encodeOverrides(o) {
+  try {
+    const c = cleanOverrides(o);
+    if (Object.keys(c).length === 0) return '';
+    const json = JSON.stringify(c);
+    // UTF-8 → base64url（+ / = をURLセーフに置換）
+    const b64 = btoa(unescape(encodeURIComponent(json)));
+    return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  } catch (e) { return ''; }
+}
+function decodeOverrides(code) {
+  try {
+    if (!code) return null;
+    let b64 = code.replace(/-/g, '+').replace(/_/g, '/');
+    while (b64.length % 4) b64 += '=';
+    const json = decodeURIComponent(escape(atob(b64)));
+    const c = JSON.parse(json);
+    if (!c || typeof c !== 'object') return null;
+    return { ...DEFAULT_OVERRIDES, ...c };
+  } catch (e) { return null; }
+}
+function overridesHash(code) {
+  let h = 5381;
+  for (let i = 0; i < code.length; i++) h = ((h * 33) ^ code.charCodeAt(i)) >>> 0;
+  return h.toString(36).toUpperCase();
+}
+// 統計用シード：設定変更なし → seed そのまま / あり → seed~ハッシュ
+function statSeedOf(seed, overrides) {
+  const code = encodeOverrides(overrides);
+  return code ? `${seed}~${overridesHash(code)}` : seed;
+}
+
+/* ── 📜 回答履歴（自分のプレイ結果をこのブラウザに保存） ── */
+const MY_HISTORY_KEY = 'tft_sim_my_history_v1';
+function loadMyHistory() { try { return JSON.parse(localStorage.getItem(MY_HISTORY_KEY) || '[]'); } catch (e) { return []; } }
+function saveMyHistory(arr) { try { localStorage.setItem(MY_HISTORY_KEY, JSON.stringify(arr)); } catch (e) {} }
+function addMyHistory(rec) {
+  const arr = loadMyHistory();
+  arr.push(rec);
+  while (arr.length > 200) arr.shift();   // 容量保護（古いものから削除）
+  saveMyHistory(arr);
+}
+
+/* ── ⏳ 連携前に終えたゲームの記録の一時保存 ──
+   「みんなの結果」を押した時に未連携だった場合、記録をここに退避して
+   アカウント連携画面へ誘導する。連携が成立した時点（Discord OAuth の
+   リダイレクトを跨いだ後でも）で自動送信される。 */
+const PENDING_RECORD_KEY = 'tft_sim_pending_record_v1';
+const loadPendingRecord = () => { try { return JSON.parse(localStorage.getItem(PENDING_RECORD_KEY) || 'null'); } catch (e) { return null; } };
+const savePendingRecord = (r) => { try { r ? localStorage.setItem(PENDING_RECORD_KEY, JSON.stringify(r)) : localStorage.removeItem(PENDING_RECORD_KEY); } catch (e) {} };
 /* ── 📊 シード統計（同じシードの最終盤面データを集計） ──
    Firebase Firestore の REST API を使用（SDK 不要・index.html 変更不要）。
    下の SEED_STATS_CONFIG に apiKey / projectId を入れると全ユーザーで共有される。
@@ -95,6 +157,7 @@ async function submitSeedRecord(record) {
       ts:    { integerValue: String(record.ts) },
       user:  { stringValue: record.user || '名無し' },
       cheat: { booleanValue: !!record.cheat },
+      ov:    { stringValue: record.ov || '' },   // 🔗 設定コード（設定変更ありのゲームのみ非空）
       player:{ stringValue: JSON.stringify(record.player || null) },
       data:  { stringValue: JSON.stringify(record.data) },
     } };
@@ -121,7 +184,7 @@ async function fetchSeedRecords(seed) {
       const f = r.document.fields;
       let data = {}; try { data = JSON.parse((f.data && f.data.stringValue) || '{}'); } catch (e) {}
       let player = null; try { player = JSON.parse((f.player && f.player.stringValue) || 'null'); } catch (e) {}
-      return { seed: f.seed?.stringValue || seed, ts: Number(f.ts?.integerValue || 0), user: f.user?.stringValue || '名無し', cheat: !!(f.cheat && f.cheat.booleanValue), player, data };
+      return { seed: f.seed?.stringValue || seed, ts: Number(f.ts?.integerValue || 0), user: f.user?.stringValue || '名無し', cheat: !!(f.cheat && f.cheat.booleanValue), ov: (f.ov && f.ov.stringValue) || '', player, data };
     });
     return { records, shared: true };
   } catch (e) {
@@ -147,6 +210,17 @@ const isFeaturedPlayer = (p, remote = null) => {
 
 // 🌟 連携は Riot ID と Discord の両方を入力して初めて「成立」する
 const accountComplete = (a) => !!(a && a.riot && a.discord);
+// 🌟 記録に紐付けるプレイヤー情報（Riot+Discord両方の連携成立時のみ）
+const buildAcctPlayer = (account) => accountComplete(account) ? {
+  riotId: account.riot ? account.riot.riotId : null,
+  name: (account.riot && account.riot.gameName) || (account.discord && account.discord.username) || null,
+  tier: account.riot ? account.riot.tier : null,
+  rank: account.riot ? account.riot.rank : null,
+  lp: account.riot ? account.riot.lp : null,
+  discordName: account.discord ? account.discord.username : null,
+  discordId: account.discord ? account.discord.id : null,
+  discordAvatar: account.discord ? account.discord.avatarUrl : null,
+} : null;
 // 管理者判定：連携成立が前提。sim-config.js の admins ＋ Firestore(sim_meta/admins) の両方を見る
 const isAdminAccount = (acct, remote = null) => {
   if (!accountComplete(acct)) return false;
@@ -948,7 +1022,9 @@ function SeedStatsDrawer({ seed, open, onClose }) {
 
   // 集計
   const agg = useMemo(() => {
-    let recs = records.filter(r => !r.cheat);  // チート記録は常に除外（新規は保存もされない）
+    // 設定変更ありの記録は「seed~設定ハッシュ」で別集計されるため、ov付きは正規記録として集計する。
+    // ovを持たない旧チート記録（設定情報なし）だけは従来通り除外。
+    let recs = records.filter(r => !r.cheat || r.ov);
     // 📶 ランクフィルター：指定ランク以上の連携済みプレイヤーの記録だけ集計
     if (rankFilter !== 'ALL') {
       const min = TIER_ORDER.indexOf(rankFilter);
@@ -982,7 +1058,7 @@ function SeedStatsDrawer({ seed, open, onClose }) {
         if (ac && bc) return (b.player.lp || 0) - (a.player.lp || 0);
         return (b.ts || 0) - (a.ts || 0);
       });
-    return { n, cheatCount: records.filter(r => r.cheat).length,
+    return { n, cheatCount: records.filter(r => r.cheat && !r.ov).length,
       augs: sorted(augMap), board: sorted(boardMap), bench: sorted(benchMap), items: sorted(itemMap), topRecs };
   }, [records, featured, rankFilter]);
 
@@ -1010,7 +1086,7 @@ function SeedStatsDrawer({ seed, open, onClose }) {
       <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexShrink: 0 }}>
         <div>
           <div style={{ fontFamily: 'Orbitron', fontSize: 14, fontWeight: 900, color: C.text, letterSpacing: 2 }}>📊 みんなの盤面</div>
-          <div style={{ fontSize: 10, color: C.dim, marginTop: 2 }}>SEED: {seed} ・ {sharedMode ? '🌐 共有データ' : '💾 このブラウザの記録のみ'}</div>
+          <div style={{ fontSize: 10, color: C.dim, marginTop: 2 }}>SEED: {String(seed).split('~')[0]}{String(seed).includes('~') ? <span style={{ color: 'var(--gold2)', fontWeight: 900 }}> ⚙️設定変更あり</span> : null} ・ {sharedMode ? '🌐 共有データ' : '💾 このブラウザの記録のみ'}</div>
         </div>
         <button onClick={onClose} style={{ width: 30, height: 30, borderRadius: 7, background: 'rgba(220,53,69,0.6)', border: '1px solid var(--red)', color: C.text, fontWeight: 900, fontSize: 14, cursor: 'pointer', flexShrink: 0 }}>✕</button>
       </div>
@@ -1032,7 +1108,12 @@ function SeedStatsDrawer({ seed, open, onClose }) {
             {TIER_ORDER.map(t => (<option key={t} value={t}>{RANK_JA[t] || t} 以上</option>))}
           </select>
         </div>
-        <div style={{ fontSize: 10, color: C.dim }}>※ チートを使用したゲームの結果は保存・集計されません{agg.cheatCount > 0 ? `（過去のチート記録 ${agg.cheatCount} 件は除外中）` : ''}</div>
+        <div style={{ fontSize: 10, color: C.dim }}>
+          {String(seed).includes('~')
+            ? '⚙️ このシードは設定変更ありのゲームです。同じ設定でプレイした記録だけを集計しています'
+            : '※ 設定を変更したゲームは「同じ設定同士」の別枠で集計されます'}
+          {agg.cheatCount > 0 ? `（旧形式のチート記録 ${agg.cheatCount} 件は除外中）` : ''}
+        </div>
       </div>
 
       {/* 本文 */}
@@ -1076,7 +1157,7 @@ function SeedStatsDrawer({ seed, open, onClose }) {
                               : p.tier
                                 ? `⭐注目 ・ ${RANK_JA[p.tier] || p.tier} ${['MASTER','GRANDMASTER','CHALLENGER'].includes(p.tier) ? '' : (p.rank || '')} ${p.lp != null ? p.lp + 'LP' : ''}`
                                 : '⭐注目プレイヤー'}
-                            {r.cheat ? ' ・チート使用' : ''}
+                            {(r.cheat && !r.ov) ? ' ・チート使用' : ''}
                           </div>
                           </div>
                           <span style={{ fontSize: 11, color: C.dim, flexShrink: 0 }}>{isOpen ? '▲ 閉じる' : '▼ 見る'}</span>
@@ -2700,19 +2781,176 @@ function SettingsScreen({ bindings, onChange, overrides = DEFAULT_OVERRIDES, onC
   );
 }
 
+/* ── 📜 回答履歴画面（自分がプレイした結果の一覧・盤面閲覧） ── */
+function HistoryScreen({ account, onChangeAccount, onBack, onPlay }) {
+  const [items, setItems] = useState(() => loadMyHistory().slice().reverse()); // 新しい順
+  const [openIdx, setOpenIdx] = useState(null);
+  const [statsSeed, setStatsSeed] = useState(null);   // 📊 ドロワーで開く統計用シード
+  const [gateOpen, setGateOpen] = useState(false);    // 🔐 アカウント連携ゲート
+  const pendingStatsRef = useRef(null);
+
+  const champById = (id) => (typeof CHAMPS !== 'undefined' ? CHAMPS : []).find(c => c.id === id);
+  const TIER_TXT = { silver: 'var(--silver)', gold: 'var(--gold2)', prismatic: 'var(--prismatic)' };
+  const fmtDate = (ts) => { try { const d = new Date(ts); return `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; } catch (e) { return ''; } };
+
+  // 🔐 「みんなの結果」：未連携なら連携画面へ → 連携成立後に自動でドロワーを開く
+  const openStats = (rec) => {
+    if (!accountComplete(account)) { pendingStatsRef.current = rec.statSeed || rec.seed; setGateOpen(true); return; }
+    setStatsSeed(rec.statSeed || rec.seed);
+  };
+  useEffect(() => {
+    if (gateOpen && accountComplete(account)) {
+      setGateOpen(false);
+      if (pendingStatsRef.current) { setStatsSeed(pendingStatsRef.current); pendingStatsRef.current = null; }
+    }
+  }, [account, gateOpen]);
+
+  const removeAt = (idx) => {
+    const next = items.filter((_, i) => i !== idx);
+    setItems(next);
+    saveMyHistory(next.slice().reverse());  // 保存は古い順に戻す
+    setOpenIdx(null);
+  };
+  const removeAll = () => {
+    if (!window.confirm('回答履歴をすべて削除しますか？（この操作は取り消せません）')) return;
+    setItems([]); saveMyHistory([]); setOpenIdx(null);
+  };
+
+  return (
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: 16, gap: 12, overflow: 'hidden',
+      backgroundImage: `linear-gradient(rgba(0,0,0,0.75), rgba(0,0,0,0.75)), url("https://assets.st-note.com/production/uploads/images/263587712/rectangle_large_type_2_386d7257054746a6649e14bdb1432725.jpeg?width=4000&height=4000&fit=bounds&format=jpg&quality=90")`,
+      backgroundSize: 'cover', backgroundPosition: 'center', animation: 'fadeIn 0.5s ease' }}>
+
+      {/* 🔐 アカウント連携ゲート */}
+      {gateOpen && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 9998 }}>
+          <AccountScreen account={account} onChangeAccount={onChangeAccount} onBack={() => setGateOpen(false)} />
+        </div>
+      )}
+
+      {/* 📊 みんなの結果ドロワー */}
+      <SeedStatsDrawer seed={statsSeed || ''} open={!!statsSeed} onClose={() => setStatsSeed(null)} />
+
+      <div style={{ width: 'min(720px, 96vw)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+        <div style={{ fontFamily: 'Orbitron', fontSize: 20, fontWeight: 900, color: '#fff', letterSpacing: 3, textShadow: '0 0 10px var(--gold)' }}>📜 回答履歴</div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {items.length > 0 && (
+            <button className="menu-btn" style={{ padding: '8px 14px', fontSize: 12, background: 'rgba(80,20,20,0.7)', color: '#fff', borderColor: 'var(--red)' }} onClick={removeAll}>🗑 全削除</button>
+          )}
+          <button className="menu-btn" style={{ padding: '8px 14px', fontSize: 12, background: 'var(--blue)', color: '#fff', borderColor: 'var(--blue)' }} onClick={onBack}>メニューに戻る</button>
+        </div>
+      </div>
+
+      <div style={{ width: 'min(720px, 96vw)', flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8, paddingBottom: 20 }}>
+        {items.length === 0 && (
+          <div style={{ textAlign: 'center', color: 'rgba(255,255,255,0.7)', fontSize: 13, padding: 40, lineHeight: 2, background: 'rgba(8,16,26,0.7)', borderRadius: 12, border: '1px solid var(--border)' }}>
+            まだ回答履歴がありません。<br />ゲームを最後までプレイすると、結果が自動でここに保存されます。
+          </div>
+        )}
+        {items.map((rec, idx) => {
+          const isOpen = openIdx === idx;
+          const d = rec.data || {};
+          return (
+            <div key={rec.ts + '_' + idx} style={{ border: `1px solid ${isOpen ? 'var(--gold2)' : 'var(--border)'}`, borderRadius: 10, overflow: 'hidden', background: 'rgba(8,16,26,0.85)' }}>
+              {/* 行ヘッダー */}
+              <div onClick={() => setOpenIdx(isOpen ? null : idx)}
+                style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', cursor: 'pointer' }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 900, color: '#fff', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <span style={{ fontFamily: 'Orbitron', letterSpacing: 1 }}>SEED: {rec.seed}</span>
+                    {rec.ov ? <span style={{ fontSize: 10, color: 'var(--gold2)' }}>⚙️設定変更あり</span> : null}
+                  </div>
+                  <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.55)', marginTop: 2 }}>
+                    {fmtDate(rec.ts)} ・ LV {d.level != null ? d.level : '-'} ・ 🪙 {d.gold != null ? d.gold : '-'}G
+                  </div>
+                </div>
+                <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)', flexShrink: 0 }}>{isOpen ? '▲ 閉じる' : '▼ 見る'}</span>
+              </div>
+
+              {/* 展開部：盤面・ベンチ・オーグメント・操作ボタン */}
+              {isOpen && (
+                <div style={{ padding: '10px 10px 14px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, background: 'rgba(0,0,0,0.35)', borderTop: '1px solid var(--border)' }}>
+                  {/* 盤面 */}
+                  <div>
+                    {[0, 1, 2, 3].map(row => (
+                      <div key={row} style={{ display: 'flex', gap: 1, marginLeft: row % 2 === 1 ? 26 : 0 }}>
+                        {[0, 1, 2, 3, 4, 5, 6].map(col => {
+                          const u = (d.board || []).find(x => x.pos === row * 7 + col);
+                          const c = u ? champById(u.id) : null;
+                          const champ = c ? { ...c, star: u.star, items: (u.itemNames || []).map(n => ({ name: n })) } : null;
+                          return <HexCell key={col} champ={champ} size={52} itemSize={11} />;
+                        })}
+                      </div>
+                    ))}
+                  </div>
+                  {/* ベンチ */}
+                  {(d.bench || []).length > 0 && (
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+                      <div style={{ fontSize: 8.5, color: 'rgba(255,255,255,0.5)', fontFamily: 'Orbitron', letterSpacing: 1 }}>BENCH</div>
+                      <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', justifyContent: 'center' }}>
+                        {(d.bench || []).map((u, bi) => {
+                          const c = champById(u.id);
+                          return (
+                            <div key={bi} style={{ width: 34, height: 34, borderRadius: 6, overflow: 'hidden', border: `2px solid ${c ? COST_COLORS[c.cost] : 'var(--border)'}`, position: 'relative', background: '#000' }} title={`${'★'.repeat(u.star || 1)} ${u.jaName}`}>
+                              {c && <img src={boardIcon(c.img)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
+                              <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, textAlign: 'center', fontSize: 8, color: STAR_COLORS[u.star || 1], fontWeight: 900, background: 'rgba(0,0,0,0.6)', lineHeight: '10px' }}>{'★'.repeat(u.star || 1)}</div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                  {/* オーグメント */}
+                  {(d.augments || []).length > 0 && (
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center' }}>
+                      {(d.augments || []).map((a, ai) => (
+                        <span key={ai} style={{ fontSize: 10.5, fontWeight: 900, color: TIER_TXT[a.tier] || '#fff', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 8px', background: 'rgba(0,0,0,0.4)' }}>{a.name}</span>
+                      ))}
+                    </div>
+                  )}
+                  {/* 操作ボタン */}
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
+                    <button className="menu-btn" style={{ padding: '8px 14px', fontSize: 12, background: 'var(--teal)', color: '#fff', borderColor: 'var(--teal)' }}
+                      onClick={() => onPlay(rec)}>▶ このシードで再挑戦</button>
+                    <button className="menu-btn" style={{ padding: '8px 14px', fontSize: 12, background: 'var(--purple)', color: '#fff', borderColor: 'var(--purple)' }}
+                      onClick={() => openStats(rec)}>📊 みんなの結果</button>
+                    <button className="menu-btn" style={{ padding: '8px 14px', fontSize: 12, background: 'rgba(80,20,20,0.7)', color: '#fff', borderColor: 'var(--red)' }}
+                      onClick={() => removeAt(idx)}>🗑 削除</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function Main() {
-  // 🌟 URLからシード値を取得する処理
-  const initialSeed = useMemo(() => {
+  // 🌟 URLからシード値と設定コード(ov)を取得する処理
+  const initialParams = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
-    return params.get('seed');
+    return { seed: params.get('seed'), ov: params.get('ov') };
   }, []);
+  const initialSeed = initialParams.seed;
 
   // 🌟 URLにシードがあれば初期状態をGAMEにする
   const [view, setView] = useState(initialSeed ? 'GAME' : 'MENU');
   const [seed, setSeed] = useState(initialSeed ? initialSeed.toUpperCase() : "");
   const [gameKey, setGameKey] = useState(0);
   const [keyBindings, setKeyBindings] = useState(loadKeyBindings); // 🌟 キー割り当て
-  const [gameOverrides, setGameOverrides] = useState(loadOverrides); // 🌟 ゲーム内設定の手動オーバーライド
+  // 🌟 ゲーム内設定の手動オーバーライド
+  //    共有URL経由（?seed=あり）の場合は、URLの ov を最優先で復元する。
+  //    ov が無い共有URLは「設定なし（完全ランダム）」として扱い、
+  //    開いた人のローカル設定は適用しない → 誰が開いても同じセットアップになる。
+  const [gameOverrides, setGameOverrides] = useState(() => {
+    if (initialParams.seed) {
+      const fromUrl = decodeOverrides(initialParams.ov);
+      return fromUrl || { ...DEFAULT_OVERRIDES };
+    }
+    return loadOverrides();
+  });
   const [account, setAccount] = useState(loadAccount);              // 👤 連携アカウント
   // 🌗 テーマ（ライト/ダーク）。body.dark クラスで styles.css のCSS変数を一括切替
   const [theme, setTheme] = useState(() => { try { return localStorage.getItem('tft_sim_theme') || 'light'; } catch (e) { return 'light'; } });
@@ -2726,6 +2964,17 @@ function Main() {
     setAccount(a); saveAccount(a);
     if (accountComplete(a)) registerSimUser(a);   // 両方連携が揃った時点でユーザー情報を登録
   };
+
+  // ⏳ 連携前に終えたゲームの記録（一時保存分）を、連携成立時に自動送信する。
+  //    Discord OAuth はページ遷移を伴うため、リダイレクトを跨いでもここで確実に送信される。
+  useEffect(() => {
+    if (!accountComplete(account)) return;
+    const pending = loadPendingRecord();
+    if (!pending) return;
+    savePendingRecord(null);   // 二重送信防止のため先にクリア
+    const acctPlayer = buildAcctPlayer(account);
+    submitSeedRecord({ ...pending, user: (acctPlayer && acctPlayer.name) || pending.user || '名無し', player: acctPlayer }).catch(() => {});
+  }, [account]);
   // Discord OAuth から戻ってきた時のトークン受け取り
   useEffect(() => {
     // 連携成立済みなら起動のたびにユーザー情報を更新登録（ランク変動も反映される）
@@ -2735,12 +2984,19 @@ function Main() {
     });
   }, []);
 
-  const startWithSeed = (targetSeed) => {
+  const startWithSeed = (targetSeed, overridesForGame) => {
     const newSeed = targetSeed || Math.random().toString(36).substring(2, 9).toUpperCase();
     setSeed(newSeed);
     
+    // 🌟 履歴からの再挑戦などで設定を指定された場合は、それをこのゲームの設定として適用する
+    const ovToUse = (overridesForGame !== undefined) ? (overridesForGame || { ...DEFAULT_OVERRIDES }) : gameOverrides;
+    if (overridesForGame !== undefined) setGameOverrides(ovToUse);
+
     // 🌟 ゲーム開始時にURLをシード付きに書き換える（リロードなし）
-    const newUrl = `${window.location.pathname}?seed=${newSeed}`;
+    //    設定変更（オーバーライド）がある場合は ov= として一緒に埋め込む
+    //    → このURLを共有すれば、相手も同じ設定・同じ盤面で再現できる
+    const ovCode = encodeOverrides(ovToUse);
+    const newUrl = `${window.location.pathname}?seed=${newSeed}${ovCode ? `&ov=${ovCode}` : ''}`;
     window.history.pushState({ path: newUrl }, '', newUrl);
 
     setGameKey(prev => prev + 1);
@@ -2797,6 +3053,15 @@ function Main() {
           <button 
             className="menu-btn" 
             style={{ width:220, background:'rgba(15,23,42,0.8)', color:'white', borderColor:'var(--border)', boxShadow:'0 10px 30px rgba(0,0,0,0.5)', transition:'all 0.2s ease', cursor:'pointer' }} 
+            onClick={() => setView('HISTORY')}
+            onMouseEnter={e => { e.currentTarget.style.transform = 'scale(1.05)'; e.currentTarget.style.background = 'rgba(30,45,74,0.9)'; }}
+            onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.background = 'rgba(15,23,42,0.8)'; }}
+          >
+            📜 回答履歴
+          </button>
+          <button 
+            className="menu-btn" 
+            style={{ width:220, background:'rgba(15,23,42,0.8)', color:'white', borderColor:'var(--border)', boxShadow:'0 10px 30px rgba(0,0,0,0.5)', transition:'all 0.2s ease', cursor:'pointer' }} 
             onClick={() => setView('ACCOUNT')}
             onMouseEnter={e => { e.currentTarget.style.transform = 'scale(1.05)'; e.currentTarget.style.background = 'rgba(30,45,74,0.9)'; }}
             onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.background = 'rgba(15,23,42,0.8)'; }}
@@ -2832,6 +3097,21 @@ function Main() {
     return <AccountScreen account={account} onChangeAccount={changeAccount} onBack={() => setView('MENU')} />;
   }
 
+  if (view === 'HISTORY') {
+    return (
+      <HistoryScreen
+        account={account}
+        onChangeAccount={changeAccount}
+        onBack={() => setView('MENU')}
+        onPlay={(rec) => {
+          // 📜 履歴からの再挑戦：当時の設定（ov）も復元して同じ条件で開始する
+          const ovObj = rec.ov ? decodeOverrides(rec.ov) : { ...DEFAULT_OVERRIDES };
+          startWithSeed(rec.seed, ovObj || { ...DEFAULT_OVERRIDES });
+        }}
+      />
+    );
+  }
+
   if (view === 'SETTINGS') {
     return (
       <SettingsScreen
@@ -2846,11 +3126,25 @@ function Main() {
 
   return <App key={gameKey} seed={seed} keyBindings={keyBindings} gameOverrides={gameOverrides} account={account}
     onChangeKeyBindings={(kb) => { setKeyBindings(kb); saveKeyBindings(kb); }}
-    onChangeOverrides={(ov) => { setGameOverrides(ov); saveOverrides(ov); }}
+    onChangeAccount={changeAccount}
+    onHome={() => {
+      // 🏠 結果画面からメニューへ戻る（URLのシードも消して、リロードでゲームに戻らないようにする）
+      try { window.history.pushState({}, '', window.location.pathname); } catch (e) {}
+      setView('MENU');
+    }}
+    onChangeOverrides={(ov) => {
+      setGameOverrides(ov); saveOverrides(ov);
+      // 🔗 ゲーム中に設定が変わったらURLの ov も追従させる（共有URLが常に現在の設定を指すように）
+      try {
+        const code = encodeOverrides(ov);
+        const newUrl = `${window.location.pathname}?seed=${seed}${code ? `&ov=${code}` : ''}`;
+        window.history.replaceState({ path: newUrl }, '', newUrl);
+      } catch (e) {}
+    }}
     onRestart={() => startWithSeed(seed)} onNewGame={() => startWithSeed()} />;
 }
 
-function App({ seed, onRestart, onNewGame, keyBindings = DEFAULT_KEYBINDINGS, gameOverrides = DEFAULT_OVERRIDES, account = null, onChangeKeyBindings = () => {}, onChangeOverrides = () => {} }) {
+function App({ seed, onRestart, onNewGame, onHome = () => {}, keyBindings = DEFAULT_KEYBINDINGS, gameOverrides = DEFAULT_OVERRIDES, account = null, onChangeAccount = () => {}, onChangeKeyBindings = () => {}, onChangeOverrides = () => {} }) {
   // 🌟 RNG（乱数生成器）をジャンルごとに独立させ、他の行動によるズレを防止！
   const rngSys = useMemo(() => createRNG(seed + "_sys"), [seed]);
   const rngShop = useMemo(() => createRNG(seed + "_shop"), [seed]);
@@ -2982,42 +3276,73 @@ function App({ seed, onRestart, onNewGame, keyBindings = DEFAULT_KEYBINDINGS, ga
   // 📊 「みんなの結果」ボタンを押したタイミングで初めて自分の結果を記録する
   //    （放置ゲーム・途中終了などの変な結果が自動で蓄積されるのを防ぐ。
   //      共有するのは「結果を見る」という能動的な操作をした人だけ）
+  // 🔗 設定変更（オーバーライド）の共有コードと統計用シード
+  //    設定なし: statSeed = seed（従来通り）
+  //    設定あり: statSeed = seed~設定ハッシュ → 同じ設定のプレイ同士でだけ集計される
+  const ovCode = encodeOverrides(gameOverrides);
+  const statSeed = ovCode ? `${seed}~${overridesHash(ovCode)}` : seed;
+
+  // 📦 送信用レコードの組み立て（統計送信・回答履歴の両方で使う）
+  //    盤面は座標(pos)付きで保存 → チャレンジャーの盤面をそのまま再現表示できる
+  const buildRecord = (acctPlayer) => {
+    const pickBoard = (arr) => arr.map((u, pos) => (u && !u.isAnvil) ? { id: u.id, jaName: u.jaName, star: u.star || 1, pos,
+      itemNames: (u.items || []).map(it => it && it.name).filter(Boolean) } : null).filter(Boolean);
+    const pickUnits = (arr) => arr.filter(u => u && !u.isAnvil).map(u => ({ id: u.id, jaName: u.jaName, star: u.star || 1 }));
+    return {
+      seed: statSeed, ts: Date.now(),   // 🔗 設定変更ありなら「seed~設定ハッシュ」で別枠保存
+      user: (acctPlayer && acctPlayer.name) || getStatsPlayerName() || '名無し',
+      player: acctPlayer,
+      cheat: !!ovCode,                  // 設定変更の有無
+      ov: ovCode || '',
+      data: {
+        level, gold,
+        augments: augments.map(a => ({ name: a.name, tier: a.tier })),
+        board: pickBoard(board),
+        bench: pickUnits(bench),
+        // 盤面ユニットに装備中の完成系アイテム（素材・消耗品を除く）
+        items: board.filter(u => u && !u.isAnvil).flatMap(u => u.items || [])
+          .filter(it => it && it.type !== 'comp' && it.type !== 'consumable').map(it => it.name),
+        // アイテム欄（手持ち）
+        inventoryNames: inventory.filter(it => it && it.name).map(it => it.name),
+      },
+    };
+  };
+
+  // 📜 回答履歴：ゲーム終了時に自動でこのブラウザへ保存（連携・共有とは無関係に必ず残る）
+  const historySavedRef = useRef(false);
+  useEffect(() => {
+    if (!isFinished || historySavedRef.current) return;
+    historySavedRef.current = true;
+    try {
+      const r = buildRecord(null);
+      addMyHistory({ seed, statSeed, ov: ovCode || '', ts: r.ts, data: r.data });
+    } catch (e) {}
+  }, [isFinished]);
+
+  // 🔐 アカウント連携ゲート：「みんなの結果」は連携後に閲覧できる
+  const [showAccountGate, setShowAccountGate] = useState(false);
+  useEffect(() => {
+    // ゲートを開いている間に連携が成立したら、自動で統計画面へ遷移する
+    if (showAccountGate && accountComplete(account)) {
+      setShowAccountGate(false);
+      setShowSeedStats(true);
+    }
+  }, [account, showAccountGate]);
+
   const openSeedStats = async () => {
+    // 未連携なら、まずアカウント連携画面へ。
+    // 終了済みの記録は一時保存しておき、連携成立時（Discord OAuth のリダイレクト後でも）に自動送信される。
+    if (!accountComplete(account)) {
+      if (isFinished && !statsSubmittedRef.current) {
+        statsSubmittedRef.current = true;
+        try { savePendingRecord(buildRecord(null)); } catch (e) {}
+      }
+      setShowAccountGate(true);
+      return;
+    }
     if (isFinished && !statsSubmittedRef.current) {
       statsSubmittedRef.current = true;
-      const hasCheat = !!(gameOverrides && Object.keys(DEFAULT_OVERRIDES).some(k => gameOverrides[k] != null));
-      if (hasCheat) { setShowSeedStats(true); return; }  // 🌟 チート使用時は記録を一切貯めない（閲覧のみ）
-      // 盤面は座標(pos)付きで保存 → チャレンジャーの盤面をそのまま再現表示できる
-      const pickBoard = (arr) => arr.map((u, pos) => (u && !u.isAnvil) ? { id: u.id, jaName: u.jaName, star: u.star || 1, pos,
-        itemNames: (u.items || []).map(it => it && it.name).filter(Boolean) } : null).filter(Boolean);
-      const pickUnits = (arr) => arr.filter(u => u && !u.isAnvil).map(u => ({ id: u.id, jaName: u.jaName, star: u.star || 1 }));
-      const acctPlayer = accountComplete(account) ? {  // 🌟 Riot+Discord両方の連携成立時のみ記録に紐付く
-        riotId: account.riot ? account.riot.riotId : null,
-        name: (account.riot && account.riot.gameName) || (account.discord && account.discord.username) || null,
-        tier: account.riot ? account.riot.tier : null,
-        rank: account.riot ? account.riot.rank : null,
-        lp: account.riot ? account.riot.lp : null,
-        discordName: account.discord ? account.discord.username : null,
-        discordId: account.discord ? account.discord.id : null,
-        discordAvatar: account.discord ? account.discord.avatarUrl : null,
-      } : null;
-      const record = {
-        seed, ts: Date.now(),
-        user: (acctPlayer && acctPlayer.name) || getStatsPlayerName() || '名無し',
-        player: acctPlayer,
-        cheat: hasCheat,
-        data: {
-          level, gold,
-          augments: augments.map(a => ({ name: a.name, tier: a.tier })),
-          board: pickBoard(board),
-          bench: pickUnits(bench),
-          // 盤面ユニットに装備中の完成系アイテム（素材・消耗品を除く）
-          items: board.filter(u => u && !u.isAnvil).flatMap(u => u.items || [])
-            .filter(it => it && it.type !== 'comp' && it.type !== 'consumable').map(it => it.name),
-          // アイテム欄（手持ち）
-          inventoryNames: inventory.filter(it => it && it.name).map(it => it.name),
-        },
-      };
+      const record = buildRecord(buildAcctPlayer(account));
       try { await submitSeedRecord(record); } catch (e) {}  // 記録完了を待ってから開く（直後の集計に反映させる）
     }
     setShowSeedStats(true);
@@ -4601,7 +4926,10 @@ const handleAugmentPick = (aug, historyContext) => {
     // ==========================================
     // 5. 売却と配置移動
     // ==========================================
-    else if (targetType === 'shop') {
+    // 🌟 バグ修正: 売却は「ベンチ/盤面の駒をショップに落とした時」だけに限定する。
+    //    以前は dragSrc が shop・inventory 等でもここに流れ込み、
+    //    駒を抱えた（ドラッグした）だけで無関係な盤面の駒が売られることがあった。
+    else if (targetType === 'shop' && (dragSrc.type === 'bench' || dragSrc.type === 'board')) {
       const src = dragSrc.type === 'bench' ? nb : nbrd;
       const mover = src[dragSrc.idx];
       if (mover) { 
@@ -4622,6 +4950,11 @@ const handleAugmentPick = (aug, historyContext) => {
         setDragSrc(null); 
         return; 
       }
+      // 🌟 バグ修正: この分岐は「ベンチ/盤面の駒 → ベンチ/盤面」の移動専用。
+      //    それ以外（ショップの駒を掴んでその場で離した等）が流れ込むと
+      //    誤売却・誤配置・駒の消滅が起きるため、ここで弾く。
+      if (dragSrc.type !== 'bench' && dragSrc.type !== 'board') { setDragSrc(null); return; }
+      if (targetType !== 'bench' && targetType !== 'board') { setDragSrc(null); return; }
       const src = dragSrc.type === 'bench' ? nb : nbrd; 
       let mover = src[dragSrc.idx];
       
@@ -4741,13 +5074,20 @@ const handleAugmentPick = (aug, historyContext) => {
           </div>
         )}
         
+        {/* 🔐 アカウント連携ゲート（みんなの結果は連携後に閲覧可能） */}
+        {showAccountGate && (
+          <div style={{ position:'fixed', inset:0, zIndex:9998 }}>
+            <AccountScreen account={account} onChangeAccount={onChangeAccount} onBack={() => setShowAccountGate(false)} />
+          </div>
+        )}
+
         {/* 🎬 振り返り（感想戦）ビューア */}
         {showReplay && (
           <ReplayViewer history={historyRef.current} seed={seed} onClose={() => setShowReplay(false)} />
         )}
 
         {/* 📊 シード統計ドロワー（右からスライドイン） */}
-        <SeedStatsDrawer seed={seed} open={showSeedStats} onClose={() => setShowSeedStats(false)} />
+        <SeedStatsDrawer seed={statSeed} open={showSeedStats} onClose={() => setShowSeedStats(false)} />
 
         {/* 🌟 1. ボタン類を上部に集約！シード値コピーもここへ移動 */}
         <div style={{display:'flex', gap:12, marginBottom:5}}>
@@ -4755,12 +5095,13 @@ const handleAugmentPick = (aug, historyContext) => {
           <button className="menu-btn" onClick={openSeedStats} style={{padding:'10px 20px',fontSize:13, background:'var(--purple)', color:'white', borderColor:'var(--purple)', fontWeight:900}}>📊 みんなの結果</button>
           <button className="menu-btn" onClick={onRestart} style={{padding:'10px 20px',fontSize:13, background:'var(--blue)', color:'white', borderColor:'var(--blue)'}}>同じシードで再挑戦</button>
           <button className="menu-btn" onClick={onNewGame} style={{padding:'10px 20px',fontSize:13, background:'var(--teal)', color:'white', borderColor:'var(--teal)'}}>新しいゲーム</button>
+          <button className="menu-btn" onClick={onHome} style={{padding:'10px 20px',fontSize:13, background:'rgba(15,23,42,0.85)', color:'white', borderColor:'var(--border)'}}>🏠 HOMEに戻る</button>
           <button className="menu-btn" onClick={() => setShowSettings(true)} style={{padding:'10px 20px',fontSize:13, background:'rgba(15,23,42,0.85)', color:'white', borderColor:'var(--border)'}}>⚙️ 設定</button>
 <button 
   className="menu-btn" 
   onClick={() => {
-    // URLを生成してコピー
-    const shareUrl = `${window.location.origin}${window.location.pathname}?seed=${seed}`;
+    // URLを生成してコピー（設定変更がある場合は ov= も含めて完全再現できるURLにする）
+    const shareUrl = `${window.location.origin}${window.location.pathname}?seed=${seed}${ovCode ? `&ov=${ovCode}` : ''}`;
     navigator.clipboard.writeText(shareUrl); 
     
     // 🌟 アイコン付きのリッチな通知を出す
@@ -4769,7 +5110,7 @@ const handleAugmentPick = (aug, historyContext) => {
         <span style={{ fontSize: '18px' }}>🔗</span>
         <div style={{ textAlign: 'left' }}>
           <div style={{ fontWeight: 900, color: 'white' }}>URLをコピーしました！</div>
-          <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.7)' }}>シード値: {seed} </div>
+          <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.7)' }}>シード値: {seed}{ovCode ? ' ・⚙️設定変更あり（設定も一緒に共有されます）' : ''} </div>
         </div>
       </div>
     );
