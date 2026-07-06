@@ -841,7 +841,7 @@ function AccountScreen({ account, onChangeAccount, onBack }) {
 
       {/* Riot ID */}
       <div style={card}>
-        <div style={secT}>🎮 Riot ID（サモナーネーム・TFTランク）</div>
+        <div style={secT}>🎮 Riot ID（サモナーネーム:例 〇〇#oooo）</div>
         {account && account.riot ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
             <div style={{ flex: 1, minWidth: 200 }}>
@@ -855,7 +855,7 @@ function AccountScreen({ account, onChangeAccount, onBack }) {
           </div>
         ) : (
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <input value={riotInput} onChange={e => setRiotInput(e.target.value)} placeholder="例: Mo10C#819"
+            <input value={riotInput} onChange={e => setRiotInput(e.target.value)} placeholder="例: ○○○#○○"
               onKeyDown={e => { if (e.key === 'Enter' && !busy) doLinkRiot(); }}
               style={{ flex: 1, minWidth: 200, padding: '10px 12px', borderRadius: 8, background: 'rgba(15,23,42,0.9)', color: '#fff', border: '1px solid var(--border)', fontSize: 13.5, fontFamily: 'Noto Sans JP' }} />
             <button onClick={doLinkRiot} disabled={busy}
@@ -868,7 +868,7 @@ function AccountScreen({ account, onChangeAccount, onBack }) {
 
       {/* Discord */}
       <div style={card}>
-        <div style={secT}>💬 Discord（名前・アイコン）</div>
+        <div style={secT}>💬 Discord</div>
         {account && account.discord ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
             {account.discord.avatarUrl && <img src={account.discord.avatarUrl} style={{ width: 44, height: 44, borderRadius: '50%', border: '2px solid var(--blue)' }} />}
