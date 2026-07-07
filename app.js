@@ -225,6 +225,33 @@ async function fetchSeedRecords(seed) {
   }
 }
 
+/* ── 🔗 短縮URL ──
+   長い ?ov=（設定を丸ごとエンコードした文字列）の代わりに、設定を Firestore の
+   sim_shares コレクションに1回だけ保存し、短いコード ?s= で参照する。
+   ドキュメントIDには overridesHash（設定が同じなら常に同じ短いコード）を使うので、
+   同じ設定を何度共有しても書き込みは冪等（重複しない・容量を圧迫しない）。 */
+const SHARE_COLLECTION = 'sim_shares';
+async function saveShareCode(ovCode) {
+  if (!ovCode || !seedStatsShared()) return '';
+  const code = overridesHash(ovCode);   // 決定論的なので待たずにURLを組み立ててよい
+  try {
+    const url = `https://firestore.googleapis.com/v1/projects/${SEED_STATS_CONFIG.projectId}/databases/(default)/documents/${SHARE_COLLECTION}/${code}?key=${SEED_STATS_CONFIG.apiKey}`;
+    const body = { fields: { ov: { stringValue: ovCode }, ts: { integerValue: String(Date.now()) } } };
+    const res = await fetch(url, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    return res.ok ? code : '';
+  } catch (e) { return ''; }
+}
+async function fetchShareOv(code) {
+  if (!code || !seedStatsShared()) return '';
+  try {
+    const url = `https://firestore.googleapis.com/v1/projects/${SEED_STATS_CONFIG.projectId}/databases/(default)/documents/${SHARE_COLLECTION}/${code}?key=${SEED_STATS_CONFIG.apiKey}`;
+    const res = await fetch(url);
+    if (!res.ok) return '';
+    const j = await res.json();
+    return (j.fields && j.fields.ov && j.fields.ov.stringValue) || '';
+  } catch (e) { return ''; }
+}
+
 /* ── 👤 アカウント連携（Riot ID / Discord） ── */
 const ACCOUNT_KEY = 'tft_sim_account_v1';
 const loadAccount = () => { try { return JSON.parse(localStorage.getItem(ACCOUNT_KEY) || 'null'); } catch (e) { return null; } };
@@ -2956,7 +2983,9 @@ function HistoryScreen({ account, onChangeAccount, onBack, onPlay }) {
             : '💾 このブラウザの記録のみ表示中（アカウント連携するとサーバーに保存された記録も表示されます）'}
       </div>
 
-      <div style={{ width: 'min(720px, 96vw)', flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8, paddingBottom: 20 }}>
+      {/* 🌟 minHeight:0 が無いと flex 子要素が中身の高さまで広がってしまい、
+             リストがスクロールできず下のボタンが画面外に切れて見えなくなる */}
+      <div style={{ width: 'min(720px, 96vw)', flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', display: 'flex', flexDirection: 'column', gap: 8, paddingBottom: 24 }}>
         {items.length === 0 && (
           <div style={{ textAlign: 'center', color: 'rgba(255,255,255,0.7)', fontSize: 13, padding: 40, lineHeight: 2, background: 'rgba(8,16,26,0.7)', borderRadius: 12, border: '1px solid var(--border)' }}>
             まだ回答履歴がありません。<br />ゲームを最後までプレイすると、結果が自動でここに保存されます。
@@ -2968,7 +2997,12 @@ function HistoryScreen({ account, onChangeAccount, onBack, onPlay }) {
           return (
             <div key={rec.ts + '_' + idx} style={{ border: `1px solid ${isOpen ? 'var(--gold2)' : 'var(--border)'}`, borderRadius: 10, overflow: 'hidden', background: 'rgba(8,16,26,0.85)' }}>
               {/* 行ヘッダー */}
-              <div onClick={() => setOpenIdx(isOpen ? null : idx)}
+              <div onClick={(e) => {
+                  const el = e.currentTarget.parentElement;
+                  setOpenIdx(isOpen ? null : idx);
+                  // 開いた時に展開部が画面外に出ないようスクロールで追従
+                  if (!isOpen && el) setTimeout(() => { try { el.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch (err) {} }, 60);
+                }}
                 style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', cursor: 'pointer' }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 12.5, fontWeight: 900, color: '#fff', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -2986,8 +3020,9 @@ function HistoryScreen({ account, onChangeAccount, onBack, onPlay }) {
               {/* 展開部：盤面・ベンチ・オーグメント・操作ボタン */}
               {isOpen && (
                 <div style={{ padding: '10px 10px 14px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, background: 'rgba(0,0,0,0.35)', borderTop: '1px solid var(--border)' }}>
-                  {/* 盤面 */}
-                  <div>
+                  {/* 盤面（狭い画面でもはみ出さないよう横スクロール可） */}
+                  <div style={{ maxWidth: '100%', overflowX: 'auto', padding: '0 2px' }}>
+                    <div style={{ width: 'fit-content', margin: '0 auto' }}>
                     {[0, 1, 2, 3].map(row => (
                       <div key={row} style={{ display: 'flex', gap: 1, marginLeft: row % 2 === 1 ? 26 : 0 }}>
                         {[0, 1, 2, 3, 4, 5, 6].map(col => {
@@ -2998,6 +3033,7 @@ function HistoryScreen({ account, onChangeAccount, onBack, onPlay }) {
                         })}
                       </div>
                     ))}
+                    </div>
                   </div>
                   {/* ベンチ */}
                   {(d.bench || []).length > 0 && (
@@ -3054,10 +3090,12 @@ function HistoryScreen({ account, onChangeAccount, onBack, onPlay }) {
 }
 
 function Main() {
-  // 🌟 URLからシード値と設定コード(ov)を取得する処理
+  // 🌟 URLからシード値と設定コードを取得する処理
+  //    ov= : 設定を丸ごと埋め込んだ長いコード（従来／オフラインでも動く）
+  //    s=  : Firestoreに保存された設定を指す短いコード（短縮URL）
   const initialParams = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
-    return { seed: params.get('seed'), ov: params.get('ov') };
+    return { seed: params.get('seed'), ov: params.get('ov'), s: params.get('s') };
   }, []);
   const initialSeed = initialParams.seed;
 
@@ -3068,15 +3106,41 @@ function Main() {
   const [keyBindings, setKeyBindings] = useState(loadKeyBindings); // 🌟 キー割り当て
   // 🌟 ゲーム内設定の手動オーバーライド
   //    共有URL経由（?seed=あり）の場合は、URLの ov を最優先で復元する。
-  //    ov が無い共有URLは「設定なし（完全ランダム）」として扱い、
+  //    s=（短縮URL）の場合は後で非同期にFirestoreから取得して差し替える。
+  //    どちらも無い共有URLは「設定なし（完全ランダム）」として扱い、
   //    開いた人のローカル設定は適用しない → 誰が開いても同じセットアップになる。
   const [gameOverrides, setGameOverrides] = useState(() => {
     if (initialParams.seed) {
-      const fromUrl = decodeOverrides(initialParams.ov);
-      return fromUrl || { ...DEFAULT_OVERRIDES };
+      if (initialParams.ov) return decodeOverrides(initialParams.ov) || { ...DEFAULT_OVERRIDES };
+      return { ...DEFAULT_OVERRIDES };   // s= は下の useEffect で解決するまで暫定でデフォルト
     }
     return loadOverrides();
   });
+  // 🔗 短縮URL（s=）の設定をFirestoreから取得中かどうか。取得完了までゲーム開始を待つ。
+  const [shareResolving, setShareResolving] = useState(!!(initialParams.seed && initialParams.s && !initialParams.ov));
+  const [shareError, setShareError] = useState(false);
+  useEffect(() => {
+    if (!shareResolving) return;
+    let alive = true;
+    (async () => {
+      // 取得失敗（背景保存とのレース／一時的な通信エラー）に備えて数回リトライ
+      let ov = '';
+      for (let attempt = 0; attempt < 4 && !ov; attempt++) {
+        if (attempt > 0) await new Promise(r => setTimeout(r, 500 * attempt));
+        ov = await fetchShareOv(initialParams.s);
+        if (!alive) return;
+      }
+      if (ov) {
+        const dec = decodeOverrides(ov);
+        if (dec) setGameOverrides(dec);
+        else setShareError(true);
+      } else {
+        setShareError(true);   // 取得できず（設定を適用できない）
+      }
+      setShareResolving(false);
+    })();
+    return () => { alive = false; };
+  }, [shareResolving]);
   const [account, setAccount] = useState(loadAccount);              // 👤 連携アカウント
   // 🌗 テーマ（ライト/ダーク）。body.dark クラスで styles.css のCSS変数を一括切替
   const [theme, setTheme] = useState(() => { try { return localStorage.getItem('tft_sim_theme') || 'light'; } catch (e) { return 'light'; } });
@@ -3134,16 +3198,54 @@ function Main() {
     if (overridesForGame !== undefined) setGameOverrides(ovToUse);
 
     // 🌟 ゲーム開始時にURLをシード付きに書き換える（リロードなし）
-    //    設定変更（オーバーライド）がある場合は ov= として一緒に埋め込む
-    //    → このURLを共有すれば、相手も同じ設定・同じ盤面で再現できる
+    //    設定変更がある場合、共有が有効なら短いコード ?s= を使い、設定本体はFirestoreへ保存。
+    //    （アドレスバーをそのままコピーしても短いURLになる。共有無効時は ?ov= にフォールバック）
     const ovCode = encodeOverrides(ovToUse);
-    const newUrl = `${window.location.pathname}?seed=${newSeed}${ovCode ? `&ov=${ovCode}` : ''}`;
+    let query = `?seed=${newSeed}`;
+    if (ovCode && seedStatsShared()) {
+      const code = overridesHash(ovCode);
+      saveShareCode(ovCode);            // 背景で保存（決定論的なので待たない）
+      query += `&s=${code}`;
+    } else if (ovCode) {
+      query += `&ov=${ovCode}`;
+    }
+    const newUrl = `${window.location.pathname}${query}`;
     window.history.pushState({ path: newUrl }, '', newUrl);
 
     setGameKey(prev => prev + 1);
     setView('GAME');
   };
 
+
+  // 🔗 短縮URLの設定を取得中はゲーム開始を待つ（デフォルト設定で始まってしまうのを防ぐ）
+  if (shareResolving) {
+    return (
+      <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, background: 'var(--bg0)', color: 'var(--text)' }}>
+        <div style={{ fontFamily: 'Orbitron', fontSize: 18, fontWeight: 900, letterSpacing: 2, opacity: 0.85 }}>設定を読み込み中…</div>
+        <div style={{ fontSize: 12, color: 'var(--textdim)' }}>共有された設定を取得しています</div>
+      </div>
+    );
+  }
+  // 🔗 短縮URLの設定が取得できなかった場合、勝手に別のランダム盤面で始めない。
+  //    （黙って始めると「設定が同じにならない」状態になるため、明示的にエラー表示する）
+  if (shareError) {
+    return (
+      <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, background: 'var(--bg0)', color: 'var(--text)', padding: 24, textAlign: 'center' }}>
+        <div style={{ fontSize: 34 }}>⚠️</div>
+        <div style={{ fontFamily: 'Noto Sans JP', fontSize: 16, fontWeight: 900 }}>共有された設定を取得できませんでした</div>
+        <div style={{ fontSize: 12, color: 'var(--textdim)', lineHeight: 1.9, maxWidth: 420 }}>
+          通信状況が不安定か、共有直後で設定の保存が完了していない可能性があります。<br />
+          このまま始めると設定が反映されない（同じ盤面になりません）ため、再試行をおすすめします。
+        </div>
+        <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+          <button className="menu-btn" style={{ padding: '10px 20px', fontSize: 13, background: 'var(--blue)', color: '#fff', borderColor: 'var(--blue)' }}
+            onClick={() => { setShareError(false); setShareResolving(true); }}>🔄 もう一度試す</button>
+          <button className="menu-btn" style={{ padding: '10px 20px', fontSize: 13, background: 'rgba(15,23,42,0.85)', color: '#fff', borderColor: 'var(--border)' }}
+            onClick={() => { try { window.history.pushState({}, '', window.location.pathname); } catch (e) {} setShareError(false); setView('MENU'); }}>🏠 HOMEへ</button>
+        </div>
+      </div>
+    );
+  }
 
   if (view === 'MENU') {
     return (
@@ -3283,11 +3385,18 @@ function Main() {
     }}
     onChangeOverrides={(ov) => {
       setGameOverrides(ov); saveOverrides(ov);
-      // 🔗 ゲーム中に設定が変わったらURLの ov も追従させる（共有URLが常に現在の設定を指すように）
+      // 🔗 ゲーム中に設定が変わったらURLも追従させる（共有URLが常に現在の設定を指すように）
       try {
         const code = encodeOverrides(ov);
-        const newUrl = `${window.location.pathname}?seed=${seed}${code ? `&ov=${code}` : ''}`;
-        window.history.replaceState({ path: newUrl }, '', newUrl);
+        let query = `?seed=${seed}`;
+        if (code && seedStatsShared()) {
+          const sc = overridesHash(code);
+          saveShareCode(code);
+          query += `&s=${sc}`;
+        } else if (code) {
+          query += `&ov=${code}`;
+        }
+        window.history.replaceState({ path: `${window.location.pathname}${query}` }, '', `${window.location.pathname}${query}`);
       } catch (e) {}
     }}
     onRestart={() => startWithSeed(seed)} onNewGame={() => startWithSeed()} />;
@@ -5253,8 +5362,21 @@ const handleAugmentPick = (aug, historyContext) => {
 <button 
   className="menu-btn" 
   onClick={() => {
-    // URLを生成してコピー（設定変更がある場合は ov= も含めて完全再現できるURLにする）
-    const shareUrl = `${window.location.origin}${window.location.pathname}?seed=${seed}${ovCode ? `&ov=${ovCode}` : ''}`;
+    // URLを生成してコピー。設定変更がある場合:
+    //  ・共有が有効(Firestore)なら sim_shares に保存し、短いコード ?s= で参照（短縮URL）
+    //  ・共有が無効なら従来どおり ?ov=（長いが自己完結）でフォールバック
+    const base = `${window.location.origin}${window.location.pathname}?seed=${seed}`;
+    let shareUrl, shortened = false;
+    if (ovCode && seedStatsShared()) {
+      const code = overridesHash(ovCode);      // 決定論的なので待たずに使える
+      saveShareCode(ovCode);                   // 背景でFirestoreへ保存（冪等）
+      shareUrl = `${base}&s=${code}`;
+      shortened = true;
+    } else if (ovCode) {
+      shareUrl = `${base}&ov=${ovCode}`;
+    } else {
+      shareUrl = base;
+    }
     navigator.clipboard.writeText(shareUrl); 
     
     // 🌟 アイコン付きのリッチな通知を出す
@@ -5262,8 +5384,8 @@ const handleAugmentPick = (aug, historyContext) => {
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, justifyContent: 'center' }}>
         <span style={{ fontSize: '18px' }}>🔗</span>
         <div style={{ textAlign: 'left' }}>
-          <div style={{ fontWeight: 900, color: 'white' }}>URLをコピーしました！</div>
-          <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.7)' }}>シード値: {seed}{ovCode ? ' ・⚙️設定変更あり（設定も一緒に共有されます）' : ''} </div>
+          <div style={{ fontWeight: 900, color: 'white' }}>{shortened ? '短縮URLをコピーしました！' : 'URLをコピーしました！'}</div>
+          <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.7)' }}>シード値: {seed}{ovCode ? (shortened ? ' ・⚙️設定変更あり（短いコードで共有）' : ' ・⚙️設定変更あり（設定も一緒に共有）') : ''} </div>
         </div>
       </div>
     );
