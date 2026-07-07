@@ -125,6 +125,38 @@ function addMyHistory(rec) {
 const PENDING_RECORD_KEY = 'tft_sim_pending_record_v1';
 const loadPendingRecord = () => { try { return JSON.parse(localStorage.getItem(PENDING_RECORD_KEY) || 'null'); } catch (e) { return null; } };
 const savePendingRecord = (r) => { try { r ? localStorage.setItem(PENDING_RECORD_KEY, JSON.stringify(r)) : localStorage.removeItem(PENDING_RECORD_KEY); } catch (e) {} };
+
+/* ── 🆔 記録の持ち主ID（サーバー側の自分の履歴を検索するためのキー）──
+   Discord ID を優先（Riot IDは改名で変わりうるため）。 */
+const uidOfPlayer = (p) => p ? (p.discordId ? 'd:' + p.discordId : (p.riotId ? 'r:' + String(p.riotId).toLowerCase() : '')) : '';
+const uidOfAccount = (a) => a ? ((a.discord && a.discord.id) ? 'd:' + a.discord.id : ((a.riot && a.riot.riotId) ? 'r:' + a.riot.riotId.toLowerCase() : '')) : '';
+
+/* ── 🌐 サーバー（Firestore）から自分の記録を取得 ──
+   uid フィールドで絞り込む。uid を持つのはこの機能追加以降の記録のみで、
+   それ以前の記録はローカル履歴側でカバーされる。 */
+async function fetchMyRecords(uid) {
+  if (!seedStatsShared() || !uid) return { records: [], shared: false };
+  try {
+    const url = `https://firestore.googleapis.com/v1/projects/${SEED_STATS_CONFIG.projectId}/databases/(default)/documents:runQuery?key=${SEED_STATS_CONFIG.apiKey}`;
+    const q = { structuredQuery: {
+      from: [{ collectionId: SEED_STATS_CONFIG.collection }],
+      where: { fieldFilter: { field: { fieldPath: 'uid' }, op: 'EQUAL', value: { stringValue: uid } } },
+      limit: 300,
+    } };
+    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(q) });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const rows = await res.json();
+    const records = (Array.isArray(rows) ? rows : []).filter(r => r.document && r.document.fields).map(r => {
+      const f = r.document.fields;
+      let data = {}; try { data = JSON.parse((f.data && f.data.stringValue) || '{}'); } catch (e) {}
+      let player = null; try { player = JSON.parse((f.player && f.player.stringValue) || 'null'); } catch (e) {}
+      return { seed: f.seed?.stringValue || '', ts: Number(f.ts?.integerValue || 0), user: f.user?.stringValue || '名無し', cheat: !!(f.cheat && f.cheat.booleanValue), ov: (f.ov && f.ov.stringValue) || '', player, data };
+    });
+    return { records, shared: true };
+  } catch (e) {
+    return { records: [], shared: false, error: e.message };
+  }
+}
 /* ── 📊 シード統計（同じシードの最終盤面データを集計） ──
    Firebase Firestore の REST API を使用（SDK 不要・index.html 変更不要）。
    下の SEED_STATS_CONFIG に apiKey / projectId を入れると全ユーザーで共有される。
@@ -158,6 +190,7 @@ async function submitSeedRecord(record) {
       user:  { stringValue: record.user || '名無し' },
       cheat: { booleanValue: !!record.cheat },
       ov:    { stringValue: record.ov || '' },   // 🔗 設定コード（設定変更ありのゲームのみ非空）
+      uid:   { stringValue: record.uid || '' },  // 🆔 記録の持ち主（回答履歴のサーバー検索用）
       player:{ stringValue: JSON.stringify(record.player || null) },
       data:  { stringValue: JSON.stringify(record.data) },
     } };
@@ -2781,13 +2814,53 @@ function SettingsScreen({ bindings, onChange, overrides = DEFAULT_OVERRIDES, onC
   );
 }
 
-/* ── 📜 回答履歴画面（自分がプレイした結果の一覧・盤面閲覧） ── */
+/* ── 📜 回答履歴画面（自分がプレイした結果の一覧・盤面閲覧） ──
+   🌐 アカウント連携済みならサーバー（Firestore）に残っている自分の記録を優先し、
+   💾 サーバーに無い分（未連携時のプレイ・送信前のプレイ等）をローカルから補完する。 */
 function HistoryScreen({ account, onChangeAccount, onBack, onPlay }) {
-  const [items, setItems] = useState(() => loadMyHistory().slice().reverse()); // 新しい順
+  const recKey = (x) => `${x.statSeed || x.seed}|${x.ts}`;
+  const [items, setItems] = useState(() => loadMyHistory().slice().reverse()); // まずローカル（新しい順）
+  const [loading, setLoading] = useState(false);
+  const [serverMode, setServerMode] = useState(false);  // 🌐 サーバー取得に成功したか
+  const [errMsg, setErrMsg] = useState(null);
   const [openIdx, setOpenIdx] = useState(null);
   const [statsSeed, setStatsSeed] = useState(null);   // 📊 ドロワーで開く統計用シード
   const [gateOpen, setGateOpen] = useState(false);    // 🔐 アカウント連携ゲート
   const pendingStatsRef = useRef(null);
+
+  // 🌐 サーバーの自分の記録を取得してローカルとマージ（サーバー優先・同一ゲームは重複排除）
+  useEffect(() => {
+    const uid = uidOfAccount(account);
+    if (!uid) { setServerMode(false); setItems(loadMyHistory().slice().reverse()); return; }
+    let alive = true;
+    (async () => {
+      setLoading(true); setErrMsg(null);
+      const res = await fetchMyRecords(uid);
+      if (!alive) return;
+      if (res.shared) {
+        const server = (res.records || []).map(r => ({
+          seed: String(r.seed || '').split('~')[0],
+          statSeed: r.seed || '',
+          ov: r.ov || '',
+          ts: r.ts || 0,
+          data: r.data || {},
+          fromServer: true,
+        }));
+        const map = new Map();
+        loadMyHistory().forEach(l => map.set(recKey(l), l));   // 💾 ローカルを先に入れて…
+        server.forEach(s => map.set(recKey(s), s));            // 🌐 同一ゲームはサーバー側で上書き（優先）
+        const merged = [...map.values()].sort((a, b) => (b.ts || 0) - (a.ts || 0));
+        setItems(merged);
+        setServerMode(true);
+      } else {
+        if (res.error) setErrMsg(res.error);
+        setServerMode(false);
+        setItems(loadMyHistory().slice().reverse());
+      }
+      setLoading(false);
+    })();
+    return () => { alive = false; };
+  }, [account]);
 
   const champById = (id) => (typeof CHAMPS !== 'undefined' ? CHAMPS : []).find(c => c.id === id);
   const TIER_TXT = { silver: 'var(--silver)', gold: 'var(--gold2)', prismatic: 'var(--prismatic)' };
@@ -2805,15 +2878,18 @@ function HistoryScreen({ account, onChangeAccount, onBack, onPlay }) {
     }
   }, [account, gateOpen]);
 
-  const removeAt = (idx) => {
-    const next = items.filter((_, i) => i !== idx);
-    setItems(next);
-    saveMyHistory(next.slice().reverse());  // 保存は古い順に戻す
+  // 🗑 削除はローカル保存分のみ（サーバーの記録はみんなの統計の一部なので消さない）
+  const removeAt = (rec) => {
+    const next = loadMyHistory().filter(l => recKey(l) !== recKey(rec));
+    saveMyHistory(next);
+    setItems(prev => prev.filter(i => recKey(i) !== recKey(rec)));
     setOpenIdx(null);
   };
   const removeAll = () => {
-    if (!window.confirm('回答履歴をすべて削除しますか？（この操作は取り消せません）')) return;
-    setItems([]); saveMyHistory([]); setOpenIdx(null);
+    if (!window.confirm('ローカルに保存された回答履歴をすべて削除しますか？（この操作は取り消せません）\n※ サーバーに保存済みの記録は残ります')) return;
+    saveMyHistory([]);
+    setItems(prev => prev.filter(i => i.fromServer));
+    setOpenIdx(null);
   };
 
   return (
@@ -2834,11 +2910,20 @@ function HistoryScreen({ account, onChangeAccount, onBack, onPlay }) {
       <div style={{ width: 'min(720px, 96vw)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
         <div style={{ fontFamily: 'Orbitron', fontSize: 20, fontWeight: 900, color: '#fff', letterSpacing: 3, textShadow: '0 0 10px var(--gold)' }}>📜 回答履歴</div>
         <div style={{ display: 'flex', gap: 8 }}>
-          {items.length > 0 && (
-            <button className="menu-btn" style={{ padding: '8px 14px', fontSize: 12, background: 'rgba(80,20,20,0.7)', color: '#fff', borderColor: 'var(--red)' }} onClick={removeAll}>🗑 全削除</button>
+          {items.some(i => !i.fromServer) && (
+            <button className="menu-btn" style={{ padding: '8px 14px', fontSize: 12, background: 'rgba(80,20,20,0.7)', color: '#fff', borderColor: 'var(--red)' }} onClick={removeAll}>🗑 ローカル分を全削除</button>
           )}
           <button className="menu-btn" style={{ padding: '8px 14px', fontSize: 12, background: 'var(--blue)', color: '#fff', borderColor: 'var(--blue)' }} onClick={onBack}>メニューに戻る</button>
         </div>
+      </div>
+
+      {/* 取得元の表示 */}
+      <div style={{ width: 'min(720px, 96vw)', fontSize: 10.5, color: 'rgba(255,255,255,0.65)', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        {loading ? '⏳ サーバーの記録を読み込み中…'
+          : serverMode ? '🌐 サーバーの記録を優先表示中（サーバーに無い分はこのブラウザの記録 💾 で補完）'
+          : uidOfAccount(account)
+            ? <span>⚠ サーバーの記録を取得できませんでした（このブラウザの記録のみ表示中）{errMsg ? `: ${errMsg}` : ''}</span>
+            : '💾 このブラウザの記録のみ表示中（アカウント連携するとサーバーに保存された記録も表示されます）'}
       </div>
 
       <div style={{ width: 'min(720px, 96vw)', flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8, paddingBottom: 20 }}>
@@ -2859,6 +2944,7 @@ function HistoryScreen({ account, onChangeAccount, onBack, onPlay }) {
                   <div style={{ fontSize: 12.5, fontWeight: 900, color: '#fff', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                     <span style={{ fontFamily: 'Orbitron', letterSpacing: 1 }}>SEED: {rec.seed}</span>
                     {rec.ov ? <span style={{ fontSize: 10, color: 'var(--gold2)' }}>⚙️設定変更あり</span> : null}
+                    <span style={{ fontSize: 9.5, color: rec.fromServer ? '#7fd0ff' : 'rgba(255,255,255,0.5)', border: '1px solid rgba(255,255,255,0.25)', borderRadius: 4, padding: '1px 5px' }} title={rec.fromServer ? 'サーバー（共有データ）に保存済みの記録' : 'このブラウザにのみ保存されている記録'}>{rec.fromServer ? '🌐 サーバー' : '💾 ローカル'}</span>
                   </div>
                   <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.55)', marginTop: 2 }}>
                     {fmtDate(rec.ts)} ・ LV {d.level != null ? d.level : '-'} ・ 🪙 {d.gold != null ? d.gold : '-'}G
@@ -2914,8 +3000,10 @@ function HistoryScreen({ account, onChangeAccount, onBack, onPlay }) {
                       onClick={() => onPlay(rec)}>▶ このシードで再挑戦</button>
                     <button className="menu-btn" style={{ padding: '8px 14px', fontSize: 12, background: 'var(--purple)', color: '#fff', borderColor: 'var(--purple)' }}
                       onClick={() => openStats(rec)}>📊 みんなの結果</button>
-                    <button className="menu-btn" style={{ padding: '8px 14px', fontSize: 12, background: 'rgba(80,20,20,0.7)', color: '#fff', borderColor: 'var(--red)' }}
-                      onClick={() => removeAt(idx)}>🗑 削除</button>
+                    {!rec.fromServer && (
+                      <button className="menu-btn" style={{ padding: '8px 14px', fontSize: 12, background: 'rgba(80,20,20,0.7)', color: '#fff', borderColor: 'var(--red)' }}
+                        onClick={() => removeAt(rec)}>🗑 削除</button>
+                    )}
                   </div>
                 </div>
               )}
@@ -2973,7 +3061,7 @@ function Main() {
     if (!pending) return;
     savePendingRecord(null);   // 二重送信防止のため先にクリア
     const acctPlayer = buildAcctPlayer(account);
-    submitSeedRecord({ ...pending, user: (acctPlayer && acctPlayer.name) || pending.user || '名無し', player: acctPlayer }).catch(() => {});
+    submitSeedRecord({ ...pending, user: (acctPlayer && acctPlayer.name) || pending.user || '名無し', player: acctPlayer, uid: uidOfPlayer(acctPlayer) }).catch(() => {});
   }, [account]);
   // Discord OAuth から戻ってきた時のトークン受け取り
   useEffect(() => {
@@ -3284,14 +3372,17 @@ function App({ seed, onRestart, onNewGame, onHome = () => {}, keyBindings = DEFA
 
   // 📦 送信用レコードの組み立て（統計送信・回答履歴の両方で使う）
   //    盤面は座標(pos)付きで保存 → チャレンジャーの盤面をそのまま再現表示できる
+  //    ts はゲーム終了時刻で固定 → ローカル履歴とサーバー記録が同一ゲームだと判定できる
+  const finishedTsRef = useRef(null);
   const buildRecord = (acctPlayer) => {
     const pickBoard = (arr) => arr.map((u, pos) => (u && !u.isAnvil) ? { id: u.id, jaName: u.jaName, star: u.star || 1, pos,
       itemNames: (u.items || []).map(it => it && it.name).filter(Boolean) } : null).filter(Boolean);
     const pickUnits = (arr) => arr.filter(u => u && !u.isAnvil).map(u => ({ id: u.id, jaName: u.jaName, star: u.star || 1 }));
     return {
-      seed: statSeed, ts: Date.now(),   // 🔗 設定変更ありなら「seed~設定ハッシュ」で別枠保存
+      seed: statSeed, ts: finishedTsRef.current || Date.now(),   // 🔗 設定変更ありなら「seed~設定ハッシュ」で別枠保存
       user: (acctPlayer && acctPlayer.name) || getStatsPlayerName() || '名無し',
       player: acctPlayer,
+      uid: uidOfPlayer(acctPlayer),     // 🆔 サーバー側の回答履歴検索用
       cheat: !!ovCode,                  // 設定変更の有無
       ov: ovCode || '',
       data: {
@@ -3314,6 +3405,7 @@ function App({ seed, onRestart, onNewGame, onHome = () => {}, keyBindings = DEFA
     if (!isFinished || historySavedRef.current) return;
     historySavedRef.current = true;
     try {
+      finishedTsRef.current = Date.now();   // 🕒 終了時刻を固定（サーバー記録と同じtsになる）
       const r = buildRecord(null);
       addMyHistory({ seed, statSeed, ov: ovCode || '', ts: r.ts, data: r.data });
     } catch (e) {}
@@ -5690,8 +5782,25 @@ const handleAugmentPick = (aug, historyContext) => {
         position: 'relative'
       }}>
         
-        {/* 左側：シード値と今回の変動要素 */}
-        <div style={{ position: 'absolute', left: isLandscapeMobile ? 'max(8px, env(safe-area-inset-left))' : 20, display: 'flex', alignItems: 'center', gap: 15 }}>
+        {/* 左側：HOMEに戻る ＋ シード値 */}
+        <div style={{ position: 'absolute', left: isLandscapeMobile ? 'max(8px, env(safe-area-inset-left))' : 20, display: 'flex', alignItems: 'center', gap: isLandscapeMobile ? 8 : 15 }}>
+          {/* 🏠 HOMEに戻る（ゲーム中は誤タップ防止のため確認ダイアログを挟む） */}
+          <button
+            onClick={() => { if (isFinished || window.confirm('ゲームを中断してHOMEに戻りますか？\n（このゲームの進行は保存されません）')) onHome(); }}
+            title="HOMEに戻る"
+            style={{
+              display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0,
+              padding: isLandscapeMobile ? '3px 7px' : '5px 11px',
+              background: 'rgba(15,23,42,0.55)', color: 'var(--text)',
+              border: '1px solid var(--border)', borderRadius: 7,
+              fontSize: isLandscapeMobile ? 11 : 12, fontWeight: 900,
+              fontFamily: 'Noto Sans JP', cursor: 'pointer', transition: 'all 0.15s',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--blue)'; e.currentTarget.style.boxShadow = '0 0 8px var(--blue)'; }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.boxShadow = 'none'; }}
+          >
+            🏠{isLandscapeMobile ? '' : ' HOME'}
+          </button>
           <div style={{ fontFamily: 'Orbitron', fontWeight: 900, fontSize: isLandscapeMobile ? 9 : 12, color: 'var(--textdim)', opacity: 0.6, letterSpacing: 1 }}>
             SEED: {seed}
           </div>
