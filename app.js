@@ -3091,16 +3091,31 @@ function Main() {
     if (accountComplete(a)) registerSimUser(a);   // 両方連携が揃った時点でユーザー情報を登録
   };
 
+  // 📊 連携完了後に自動で開く「みんなの結果」の統計用シード
+  //    （みんなの結果 → ログイン画面 → 連携成立、の流れで、プレイしたゲームの統計をそのまま見せる）
+  const [menuStatsSeed, setMenuStatsSeed] = useState(null);
+
   // ⏳ 連携前に終えたゲームの記録（一時保存分）を、連携成立時に自動送信する。
   //    Discord OAuth はページ遷移を伴うため、リダイレクトを跨いでもここで確実に送信される。
+  //    送信後、プレイしたシードの「みんなの結果」を自動で開く（HOMEに戻されて終わりにならないように）。
   useEffect(() => {
     if (!accountComplete(account)) return;
     const pending = loadPendingRecord();
     if (!pending) return;
     savePendingRecord(null);   // 二重送信防止のため先にクリア
     const acctPlayer = buildAcctPlayer(account);
-    submitSeedRecord({ ...pending, user: (acctPlayer && acctPlayer.name) || pending.user || '名無し', player: acctPlayer, uid: uidOfPlayer(acctPlayer) }).catch(() => {});
+    const rec = { ...pending, user: (acctPlayer && acctPlayer.name) || pending.user || '名無し', player: acctPlayer, uid: uidOfPlayer(acctPlayer) };
+    const openAfter = view !== 'GAME';   // ゲーム画面が生きている場合は結果画面側のドロワーが開くので二重に出さない
+    (async () => {
+      try { await submitSeedRecord(rec); } catch (e) {}   // 自分の記録を集計に反映させてから開く
+      if (openAfter) setMenuStatsSeed(rec.seed);
+    })();
   }, [account]);
+
+  // 📊 メニュー/アカウント画面の上に重ねて表示する統計ドロワー
+  const globalStatsDrawer = (
+    <SeedStatsDrawer seed={menuStatsSeed || ''} open={!!menuStatsSeed} onClose={() => setMenuStatsSeed(null)} />
+  );
   // Discord OAuth から戻ってきた時のトークン受け取り
   useEffect(() => {
     // 連携成立済みなら起動のたびにユーザー情報を更新登録（ランク変動も反映される）
@@ -3132,6 +3147,8 @@ function Main() {
 
   if (view === 'MENU') {
     return (
+      <React.Fragment>
+      {globalStatsDrawer}
       <div style={{ height:'100vh', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:30, backgroundImage:`linear-gradient(rgba(0,0,0,0.6), rgba(0,0,0,0.6)), url("https://assets.st-note.com/production/uploads/images/263587712/rectangle_large_type_2_386d7257054746a6649e14bdb1432725.jpeg?width=4000&height=4000&fit=bounds&format=jpg&quality=90")`, backgroundSize:'cover', backgroundPosition:'center', padding:20, animation:'fadeIn 1s ease' }}>
 <div style={{ 
   fontFamily:'Orbitron', 
@@ -3216,11 +3233,17 @@ function Main() {
           )}
         </div>
       </div>
+      </React.Fragment>
     );
   }
 
   if (view === 'ACCOUNT') {
-    return <AccountScreen account={account} onChangeAccount={changeAccount} onBack={() => setView('MENU')} />;
+    return (
+      <React.Fragment>
+        <AccountScreen account={account} onChangeAccount={changeAccount} onBack={() => setView('MENU')} />
+        {globalStatsDrawer}
+      </React.Fragment>
+    );
   }
 
   if (view === 'HISTORY') {
