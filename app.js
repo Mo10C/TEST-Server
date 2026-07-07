@@ -360,6 +360,11 @@ const getAugmentMetaByName = (name) => {
 // 🇯🇵 アイテム英名→日本語名（ITEM_JAの大文字小文字ゆれ・紋章の欠落に対応）
 const resolveItemJa = (name) => {
   if (!name) return '';
+  // サイオニックは装備時点で日本語名（記録にも日本語名で保存される）
+  if (typeof PSIONIC_ITEMS !== 'undefined' && Array.isArray(PSIONIC_ITEMS)) {
+    const psi = PSIONIC_ITEMS.find(p => p.jaName === name || p.name === name);
+    if (psi) return psi.jaName;
+  }
   const direct = getJaName(name);
   if (direct && direct !== name) return direct;
   // 大文字小文字を無視して ITEM_JA を検索
@@ -505,9 +510,15 @@ const getMetaTFTItemUrl = (item) => {
   if (nameInput.startsWith('tft17_item_psyops_')) {
     return `https://cdn.metatft.com/cdn-cgi/image/width=64,format=webp/file/metatft/items/${nameInput}.png`;
   }
+
+  // 1.1 サイオニック（装備時は name に日本語名が入るため、記録から復元した場合もここで解決する）
+  if (typeof PSIONIC_ITEMS !== 'undefined' && Array.isArray(PSIONIC_ITEMS)) {
+    const psi = PSIONIC_ITEMS.find(p => p.jaName === nameInput || p.name === nameInput);
+    if (psi) return `https://cdn.metatft.com/cdn-cgi/image/width=64,format=webp/file/metatft/items/${psi.name}.png`;
+  }
   
-  // アーティファクトとレディアントを結合して検索
-  const specialItem = [...ARTIFACTS, ...RADIANT_ITEMS].find(a => a.name === nameInput || a.id === nameInput || a.imgName === nameInput);
+  // アーティファクトとレディアントを結合して検索（日本語名でも引けるようにする）
+  const specialItem = [...ARTIFACTS, ...RADIANT_ITEMS].find(a => a.name === nameInput || a.id === nameInput || a.imgName === nameInput || a.jaName === nameInput);
   if (specialItem) {
     if (specialItem.imgName) {
       return `https://cdn.metatft.com/cdn-cgi/image/width=64,format=webp/file/metatft/items/${specialItem.imgName}.png`;
@@ -543,6 +554,25 @@ const getAugmentIconUrl = (aug) => {
   }
   // MetaTFTのパスに合わせる（全て.png形式）
   return `https://cdn.metatft.com/cdn-cgi/image/width=64,format=webp/file/metatft/augments/${aug.imgName}.png`;
+};
+
+// 📛 記録に保存されたアイテム名（文字列）から表示用オブジェクトを復元する。
+//    記録には名前しか保存されないため、そのまま {name} で表示すると
+//    ・サイオニック（日本語名で保存）→ 画像URLが引けずアイコンが出ない
+//    ・アーティファクト/レディアント → type が失われ枠色（赤/金）が出ない
+//    という問題が起きる。ここで imgName / type を補完してから HexCell に渡す。
+const hydrateItemByName = (n) => {
+  if (!n) return { name: '' };
+  if (typeof PSIONIC_ITEMS !== 'undefined' && Array.isArray(PSIONIC_ITEMS)) {
+    const psi = PSIONIC_ITEMS.find(p => p.jaName === n || p.name === n);
+    if (psi) return { name: psi.jaName, imgName: psi.name, isPsionic: true, type: 'completed' };
+  }
+  const sp = [
+    ...(typeof ARTIFACTS !== 'undefined' ? ARTIFACTS : []),
+    ...(typeof RADIANT_ITEMS !== 'undefined' ? RADIANT_ITEMS : []),
+  ].find(a => a.name === n || a.id === n || a.imgName === n || a.jaName === n);
+  if (sp) return { ...sp };
+  return { name: n };
 };
 
 
@@ -1211,7 +1241,7 @@ function SeedStatsDrawer({ seed, open, onClose }) {
                                   {[0, 1, 2, 3, 4, 5, 6].map(col => {
                                     const u = (r.data.board || []).find(x => x.pos === row * 7 + col);
                                     const c = u ? champById(u.id) : null;
-                                    const champ = c ? { ...c, star: u.star, items: (u.itemNames || []).map(n => ({ name: n })) } : null;
+                                    const champ = c ? { ...c, star: u.star, items: (u.itemNames || []).map(hydrateItemByName) } : null;
                                     return <HexCell key={col} champ={champ} size={48} />;
                                   })}
                                 </div>
@@ -2963,7 +2993,7 @@ function HistoryScreen({ account, onChangeAccount, onBack, onPlay }) {
                         {[0, 1, 2, 3, 4, 5, 6].map(col => {
                           const u = (d.board || []).find(x => x.pos === row * 7 + col);
                           const c = u ? champById(u.id) : null;
-                          const champ = c ? { ...c, star: u.star, items: (u.itemNames || []).map(n => ({ name: n })) } : null;
+                          const champ = c ? { ...c, star: u.star, items: (u.itemNames || []).map(hydrateItemByName) } : null;
                           return <HexCell key={col} champ={champ} size={52} itemSize={11} />;
                         })}
                       </div>
@@ -2986,12 +3016,20 @@ function HistoryScreen({ account, onChangeAccount, onBack, onPlay }) {
                       </div>
                     </div>
                   )}
-                  {/* オーグメント */}
+                  {/* オーグメント（アイコン付き） */}
                   {(d.augments || []).length > 0 && (
                     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center' }}>
-                      {(d.augments || []).map((a, ai) => (
-                        <span key={ai} style={{ fontSize: 10.5, fontWeight: 900, color: TIER_TXT[a.tier] || '#fff', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 8px', background: 'rgba(0,0,0,0.4)' }}>{a.name}</span>
-                      ))}
+                      {(d.augments || []).map((a, ai) => {
+                        const meta = getAugmentMetaByName(a.name);
+                        return (
+                          <span key={ai} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10.5, fontWeight: 900, color: TIER_TXT[a.tier] || '#fff', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 8px', background: 'rgba(0,0,0,0.4)' }}>
+                            {(meta && meta.imgName)
+                              ? <img src={getAugmentIconUrl(meta)} style={{ width: 16, height: 16, borderRadius: 3, border: '1px solid rgba(148,163,184,0.5)', background: '#0b1622', flexShrink: 0 }} onError={(e) => e.target.style.display='none'} />
+                              : <span style={{ fontSize: 10, flexShrink: 0 }}>✨</span>}
+                            {a.name}
+                          </span>
+                        );
+                      })}
                     </div>
                   )}
                   {/* 操作ボタン */}

@@ -133,8 +133,8 @@ textarea{width:100%;min-height:56px;resize:vertical;line-height:1.5}
     <div class="note" style="margin-top:6px">非表示のセットのチャンピオンは、シミュレーターのショップ・ドロップ・指定リストすべてから除外されます（データは残ります）。新しいセットが来たら「＋セット追加」→ そのタブに追加していってください。</div>
   </div>
   <div class="card" style="overflow-x:auto">
-    <table><thead><tr><th></th><th>ID</th><th>英名</th><th>日本語名</th><th>コスト</th><th>特性（カンマ区切り）</th><th>画像名(img)</th><th></th></tr></thead>
-    <tbody id="champ-body"><tr><td colspan="8" class="note">読み込み中…</td></tr></tbody></table>
+    <table><thead><tr><th></th><th>ID</th><th>英名</th><th>日本語名</th><th>コスト</th><th>特性（カンマ区切り）</th><th>画像名(img)</th><th>ロール</th><th>理想アイテム（最大8）</th><th></th></tr></thead>
+    <tbody id="champ-body"><tr><td colspan="10" class="note">読み込み中…</td></tr></tbody></table>
   </div>
 </div>
 
@@ -322,6 +322,12 @@ async function deleteRecord(i) {
   records.splice(i, 1); renderRecords(); showMsg('削除しました');
 }
 function fmtUnits(list) { return (list || []).map(u => `<span class="pill">${esc(u.jaName)}${'★'.repeat(u.star || 1)}</span>`).join(''); }
+// 🇯🇵 アイテム英名→日本語（data-items.js 読み込み時に生成したマップを使用。ゆれ対応で小文字・記号除去でも検索）
+function itemJaName(n) {
+  if (!n) return '';
+  const m = window.__itemJaMap || {};
+  return m[n] || m[String(n).toLowerCase().replace(/['.\s]/g, '')] || n;
+}
 function renderRecords() {
   const filter = document.getElementById('seed-filter').value.trim().toUpperCase();
   const view = filter ? records.filter(r => (r.seed || '').toUpperCase().includes(filter)) : records;
@@ -342,7 +348,7 @@ function renderRecords() {
         }).join('')}</td>
         <td>${fmtUnits(d.board)}</td>
         <td>${fmtUnits(d.bench)}</td>
-        <td>${(d.items||[]).map(n=>`<span class="pill">${esc(n)}</span>`).join('')}</td>
+        <td>${(d.items||[]).map(n=>`<span class="pill">${esc(itemJaName(n))}</span>`).join('')}</td>
         <td><button class="danger" style="padding:4px 9px;font-size:11px" onclick="deleteRecord(${gi})">削除</button></td>
       </tr>`;
     }).join('');
@@ -369,7 +375,7 @@ function renderAgg(filter, view) {
   put('agg-augs', augM, v => bar(esc(v.name), v.count, 'tier-'+v.tier));
   put('agg-board', boM, v => bar(esc(v.jaName)+'★'.repeat(v.star), v.count));
   put('agg-bench', beM, v => bar(esc(v.jaName)+'★'.repeat(v.star), v.count));
-  put('agg-items', itM, v => bar(esc(v.name), v.count));
+  put('agg-items', itM, v => bar(esc(itemJaName(v.name)), v.count));
 }
 function exportJson() {
   if (!records.length) return showMsg('先に記録を読み込んでください', true);
@@ -440,7 +446,8 @@ function loadChampText(text) {
   try {
     const got = new Function(text + ';\nreturn { CHAMPS: (typeof CHAMPS !== "undefined" ? CHAMPS : []) };')();
     champs = (got.CHAMPS || []).map(c => ({ id: c.id || '', name: c.name || '', jaName: c.jaName || '', cost: c.cost || 1,
-      traits: (c.traits || []).join(', '), img: c.img || '', set: c.set || 'set17', hidden: !!c.hidden }));
+      traits: (c.traits || []).join(', '), img: c.img || '', set: c.set || 'set17', hidden: !!c.hidden,
+      role: c.role || '', idealItems: Array.isArray(c.idealItems) ? c.idealItems.slice(0, 8) : [] }));
   } catch (err) { showMsg('data-champions.js の解析に失敗: ' + err.message, true); return; }
   document.getElementById('champ-dl').disabled = false;
   document.getElementById('champ-add').disabled = false;
@@ -489,11 +496,80 @@ function renderChamps() {
     <td><input type="number" min="1" max="5" value="${c.cost}" style="width:52px" oninput="champs[${i}].cost=Number(this.value)||1"></td>
     <td><input type="text" value="${esc(c.traits)}" style="width:220px" oninput="champs[${i}].traits=this.value"></td>
     <td><input type="text" value="${esc(c.img)}" style="width:100px" oninput="champs[${i}].img=this.value" onchange="renderChamps()"></td>
+    <td><select style="width:158px" onchange="champs[${i}].role=this.value">
+      <option value="">（未設定）</option>
+      ${CHAMP_ROLES.map(r => `<option value="${esc(r)}" ${c.role === r ? 'selected' : ''}>${esc(r)}</option>`).join('')}
+    </select></td>
+    <td style="min-width:190px">
+      <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
+        ${(c.idealItems || []).map(id => {
+          const it = completedItemById(id);
+          return it
+            ? `<img src="${itemIconUrl(it)}" title="${esc(it.ja)}" style="width:20px;height:20px;border-radius:3px;border:1px solid var(--border);background:#0b1622" onerror="this.style.opacity=.2">`
+            : `<span class="pill" title="data-items.js に見つかりません">${esc(id)}</span>`;
+        }).join('')}
+        <button style="padding:3px 9px;font-size:11px" onclick="openIdealItemPicker(${i})">✏️ ${(c.idealItems || []).length}/8</button>
+      </div>
+    </td>
     <td><button class="danger" style="padding:4px 9px;font-size:11px" onclick="champs.splice(${i},1);renderChamps()">削除</button></td>
-  </tr>`).join('') || '<tr><td colspan="8" class="note">チャンピオンがいません（＋新規追加で作成）</td></tr>';
+  </tr>`).join('') || '<tr><td colspan="10" class="note">チャンピオンがいません（＋新規追加で作成）</td></tr>';
+}
+/* ── 🎭 ロール定義（このリストから選択） ── */
+const CHAMP_ROLES = [
+  '攻撃力タンク', '魔力タンク',
+  '攻撃力ファイター', '魔力ファイター', '複合ファイター',
+  '攻撃力アサシン', '魔力アサシン',
+  '攻撃力マークスマン', '魔力マークスマン',
+  '攻撃力キャスター', '魔力キャスター',
+  '攻撃力スペシャリスト', '魔力スペシャリスト',
+];
+/* ── 🗡️ 理想アイテム選択（通常の完成アイテムから最大8個） ── */
+function completedItemById(id) {
+  const list = window.__completedItems || [];
+  return list.find(it => it.id === id) || (typeof itemList !== 'undefined' ? itemList.find(it => it.id === id && it.type === 'completed') : null);
+}
+let idealPickIdx = null;
+function openIdealItemPicker(i) {
+  if (!(window.__completedItems || []).length) return showMsg('data-items.js が未読み込みのため理想アイテムを選択できません（アイテムタブで読み込んでください）', true);
+  idealPickIdx = i;
+  renderIdealPicker();
+  document.getElementById('ideal-overlay').style.display = 'flex';
+}
+function renderIdealPicker() {
+  const c = champs[idealPickIdx];
+  if (!c) return;
+  c.idealItems = c.idealItems || [];
+  document.getElementById('ideal-title').textContent = `${c.jaName || c.id || '新規チャンピオン'} の理想アイテム（${c.idealItems.length}/8）`;
+  const sel = new Set(c.idealItems);
+  document.getElementById('ideal-grid').innerHTML = (window.__completedItems || []).map(it => {
+    const on = sel.has(it.id);
+    return `<div onclick="toggleIdealItem('${esc(it.id)}')" title="${esc(it.ja)}"
+      style="display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 4px;border-radius:8px;cursor:pointer;user-select:none;
+             border:2px solid ${on ? 'var(--gold)' : 'var(--border)'};background:${on ? 'rgba(212,175,55,0.16)' : 'rgba(0,0,0,0.25)'}">
+      <img src="${itemIconUrl(it)}" style="width:34px;height:34px;border-radius:5px;background:#0b1622" onerror="this.style.opacity=.2">
+      <div style="font-size:10px;text-align:center;line-height:1.25;word-break:break-all">${esc(it.ja)}</div>
+    </div>`;
+  }).join('');
+}
+function toggleIdealItem(id) {
+  const c = champs[idealPickIdx];
+  if (!c) return;
+  c.idealItems = c.idealItems || [];
+  const k = c.idealItems.indexOf(id);
+  if (k >= 0) c.idealItems.splice(k, 1);
+  else {
+    if (c.idealItems.length >= 8) return showMsg('理想アイテムは最大8個までです', true);
+    c.idealItems.push(id);
+  }
+  renderIdealPicker();
+}
+function closeIdealPicker() {
+  document.getElementById('ideal-overlay').style.display = 'none';
+  idealPickIdx = null;
+  renderChamps();   // 一覧のアイコン表示を更新
 }
 function addChamp() {
-  champs.push({ id: '', name: '', jaName: '', cost: 1, traits: '', img: '', set: activeChampSet, hidden: false });
+  champs.push({ id: '', name: '', jaName: '', cost: 1, traits: '', img: '', set: activeChampSet, hidden: false, role: '', idealItems: [] });
   renderChamps();
   const rows = document.querySelectorAll('#champ-body tr');
   if (rows.length) rows[rows.length - 1].scrollIntoView({ behavior: 'smooth' });
@@ -506,7 +582,9 @@ function downloadChamps() {
   if (new Set(ids).size !== ids.length) return showMsg('IDが重複しています', true);
   const lines = champs.map(c => {
     const traits = c.traits.split(',').map(t => t.trim()).filter(Boolean);
-    return `  {id:${JSON.stringify(c.id)}, name:${JSON.stringify(c.name)}, jaName:${JSON.stringify(c.jaName)}, cost:${c.cost}, traits:${JSON.stringify(traits)}, img:${JSON.stringify(c.img)}, set:${JSON.stringify(c.set || 'set17')}${c.hidden ? ', hidden:true' : ''}},`;
+    const roleStr = c.role ? `, role:${JSON.stringify(c.role)}` : '';
+    const idealStr = (c.idealItems && c.idealItems.length) ? `, idealItems:${JSON.stringify(c.idealItems.slice(0, 8))}` : '';
+    return `  {id:${JSON.stringify(c.id)}, name:${JSON.stringify(c.name)}, jaName:${JSON.stringify(c.jaName)}, cost:${c.cost}, traits:${JSON.stringify(traits)}, img:${JSON.stringify(c.img)}, set:${JSON.stringify(c.set || 'set17')}${roleStr}${idealStr}${c.hidden ? ', hidden:true' : ''}},`;
   });
   const startMark = 'const CHAMPS=[';
   const si = champText.indexOf(startMark);
@@ -661,7 +739,8 @@ function loadItemText(text) {
   try {
     const got = new Function(itemText + `;
       return { ITEMS: typeof ITEMS!=='undefined'?ITEMS:[], ITEM_RECIPES: typeof ITEM_RECIPES!=='undefined'?ITEM_RECIPES:{},
-               ARTIFACTS: typeof ARTIFACTS!=='undefined'?ARTIFACTS:[], ITEM_JA: typeof ITEM_JA!=='undefined'?ITEM_JA:{} };`)();
+               ARTIFACTS: typeof ARTIFACTS!=='undefined'?ARTIFACTS:[], ITEM_JA: typeof ITEM_JA!=='undefined'?ITEM_JA:{},
+               RADIANT_ITEMS: typeof RADIANT_ITEMS!=='undefined'?RADIANT_ITEMS:[], PSIONIC_ITEMS: typeof PSIONIC_ITEMS!=='undefined'?PSIONIC_ITEMS:[] };`)();
     const ja = (n) => itemMB.addedJa[n] || got.ITEM_JA[n] || n;
     itemList = [
       ...got.ITEMS.map(it => ({ id: it.id, name: it.name, ja: ja(it.name), type: it.type || 'comp', imgName: it.imgName })),
@@ -669,6 +748,25 @@ function loadItemText(text) {
       ...got.ARTIFACTS.map(it => ({ id: it.id, name: it.name, ja: it.jaName || ja(it.name), type: 'artifact', imgName: it.imgName })),
       ...itemMB.added.map(it => ({ id: it.id, name: it.name, ja: itemMB.addedJa[it.name] || it.jaName || it.name, type: it.type, imgName: it.imgName, isAdded: true })),
     ];
+
+    // 🇯🇵 記録タブ・集計用：英名→日本語の変換マップ（表記ゆれに強いよう小文字・記号除去キーでも引ける）
+    window.__itemJaMap = {};
+    const addJa = (k, v) => { if (!k || !v) return; window.__itemJaMap[k] = v; window.__itemJaMap[String(k).toLowerCase().replace(/['.\s]/g, '')] = v; };
+    Object.entries(got.ITEM_JA).forEach(([k, v]) => addJa(k, v));
+    itemList.forEach(it => addJa(it.name, it.ja));
+    got.RADIANT_ITEMS.forEach(it => { addJa(it.name, it.jaName); addJa(it.id, it.jaName); addJa(it.imgName, it.jaName); });
+    got.PSIONIC_ITEMS.forEach(it => { addJa(it.name, it.jaName); });
+
+    // 🧩 チャンピオンタブの「理想アイテム」候補：通常の完成アイテム（紋章を除くレシピ完成品）
+    window.__completedItems = [];
+    const seenIds = new Set();
+    Object.values(got.ITEM_RECIPES).forEach(it => {
+      if (it.grantedTrait) return;           // 紋章は対象外
+      if (!it.id || seenIds.has(it.id)) return;
+      seenIds.add(it.id);
+      window.__completedItems.push({ id: it.id, name: it.name, ja: ja(it.name), imgName: it.imgName });
+    });
+    if (typeof renderChamps === 'function' && champText != null) renderChamps();   // 理想アイテムのアイコンを反映
   } catch (err) { showMsg('data-items.js の解析に失敗: ' + err.message, true); return; }
   document.getElementById('item-dl').disabled = false;
   document.getElementById('item-add').disabled = false;
@@ -927,5 +1025,19 @@ window.addEventListener('load', () => {
   } catch (err) { showMsg('自動読み込みでエラー: ' + err.message, true); }
 });
 </script>
+<!-- 🗡️ 理想アイテム選択モーダル（チャンピオンエディタ用） -->
+<div id="ideal-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.72);z-index:9000;align-items:center;justify-content:center" onclick="if(event.target===this)closeIdealPicker()">
+  <div style="background:#0f1a2e;border:1px solid var(--gold);border-radius:12px;width:min(700px,94vw);max-height:84vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.6)">
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border)">
+      <b id="ideal-title" style="font-size:14px"></b>
+      <button onclick="closeIdealPicker()" style="padding:5px 12px;font-size:12px">✕ 閉じる</button>
+    </div>
+    <div style="padding:6px 16px 0;font-size:11px;color:#8ba0bd">通常の完成アイテムから最大8個まで選択できます（クリックで選択/解除）</div>
+    <div id="ideal-grid" style="padding:14px;overflow-y:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(88px,1fr));gap:8px"></div>
+    <div style="padding:10px 16px;border-top:1px solid var(--border);display:flex;justify-content:flex-end">
+      <button onclick="closeIdealPicker()" style="background:var(--gold);border-color:var(--gold);color:#0b1320;font-weight:900;padding:7px 18px">OK</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>
