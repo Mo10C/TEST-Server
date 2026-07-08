@@ -53,7 +53,15 @@ const DEFAULT_OVERRIDES = {
   //   { initial:[id|null,id|null,id|null], reroll:[id|null,id|null,id|null] }
   //   initial = 最初に出る3枠 / reroll = 各枠を再抽選したとき最初に出る3枠。
   //   null または各要素null＝その枠はランダム（従来通り）。ティアはまたいで指定可。
-  augmentPicks: null
+  augmentPicks: null,
+  // 🎁 配布チャンピオン指定：遭遇でもらえる駒を固定する
+  //   { [遭遇id]: [champId|null ×配布数] }。ENC_CHAMP_SPECS にある遭遇のみ有効。
+  //   固定した遭遇（overrides.encounter）に対してのみ意味を持つ。null枠はランダム（従来通り）。
+  encounterChamps: null,
+  // 🎯 開始時デフォルト1コス指定：遭遇に関係なく1-1で配られる1コス駒を固定する（champId）。
+  //   null＝ランダム（従来通り）。※駒を配る遭遇（ビクター/ミィプシー/ミスフォーチュン/リサンドラ）
+  //   の時はデフォルト配布自体が無いため適用されない。
+  startChamp: null
 };
 const OVERRIDE_STORAGE_KEY = 'tft_set17_overrides_v1';
 function loadOverrides() {
@@ -177,7 +185,8 @@ async function submitSeedRecord(record) {
   // 常にローカルにも保存（共有未設定でも自分の統計が見られる）
   try {
     const arr = JSON.parse(localStorage.getItem(SEED_STATS_LOCAL_KEY) || '[]');
-    arr.push(record);
+    const { replay, ...light } = record;   // 🎬 リプレイはローカルに残さない（容量保護。サーバーへのみ送る）
+    arr.push(light);
     while (arr.length > 500) arr.shift();   // 容量保護
     localStorage.setItem(SEED_STATS_LOCAL_KEY, JSON.stringify(arr));
   } catch (e) {}
@@ -191,6 +200,7 @@ async function submitSeedRecord(record) {
       cheat: { booleanValue: !!record.cheat },
       ov:    { stringValue: record.ov || '' },   // 🔗 設定コード（設定変更ありのゲームのみ非空）
       uid:   { stringValue: record.uid || '' },  // 🆔 記録の持ち主（回答履歴のサーバー検索用）
+      replay:{ stringValue: JSON.stringify(record.replay || []) },   // 🎬 手順つきリプレイ（圧縮JSON）
       player:{ stringValue: JSON.stringify(record.player || null) },
       data:  { stringValue: JSON.stringify(record.data) },
     } };
@@ -217,7 +227,8 @@ async function fetchSeedRecords(seed) {
       const f = r.document.fields;
       let data = {}; try { data = JSON.parse((f.data && f.data.stringValue) || '{}'); } catch (e) {}
       let player = null; try { player = JSON.parse((f.player && f.player.stringValue) || 'null'); } catch (e) {}
-      return { seed: f.seed?.stringValue || seed, ts: Number(f.ts?.integerValue || 0), user: f.user?.stringValue || '名無し', cheat: !!(f.cheat && f.cheat.booleanValue), ov: (f.ov && f.ov.stringValue) || '', player, data };
+      let replay = []; try { replay = JSON.parse((f.replay && f.replay.stringValue) || '[]'); } catch (e) {}
+      return { seed: f.seed?.stringValue || seed, ts: Number(f.ts?.integerValue || 0), user: f.user?.stringValue || '名無し', cheat: !!(f.cheat && f.cheat.booleanValue), ov: (f.ov && f.ov.stringValue) || '', player, replay, data };
     });
     return { records, shared: true };
   } catch (e) {
@@ -603,6 +614,43 @@ const hydrateItemByName = (n) => {
 };
 
 
+
+// 🎁 遭遇でチャンピオンが配られる遭遇の仕様（配布チャンピオン指定・ピッカーで使用）
+//    count=配布数, cost=対象コスト, star=付与スター。ここに無い遭遇は駒を配らない。
+const ENC_CHAMP_SPECS = {
+  viktor:      { count: 1, cost: 1, star: 2, label: '1コスト★2 を1体' },
+  miipsy:      { count: 1, cost: 2, star: 1, label: '2コスト を1体' },
+  missfortune: { count: 1, cost: 3, star: 1, label: '3コスト を1体' },
+  lissandra:   { count: 5, cost: 1, star: 1, label: '1コスト を5体' },
+};
+
+/* ── 🎬 リプレイ履歴の圧縮／復元（サーバー保存用） ──
+   historyRef の各フレームは board(28)/bench(9)/shop(5) の駒オブジェクト配列を持ち容量が大きい。
+   保存時は id/star/アイテム名だけに圧縮し、閲覧時に CHAMPS 等から復元して ReplayViewer に渡す。 */
+const packReplayUnit = (u) => {
+  if (!u) return 0;                                   // 空きスロットは 0
+  if (u.isAnvil) return { av: u.anvilType || 'component' };
+  return { i: u.id, s: u.star || 1, it: (u.items || []).map(x => x && (x.name || x.jaName)).filter(Boolean) };
+};
+const unpackReplayUnit = (u) => {
+  if (!u) return null;
+  if (u.av) return createAnvil(u.av);
+  const c = (typeof CHAMPS !== 'undefined' ? CHAMPS : []).find(x => x.id === u.i);
+  if (!c) return null;
+  return { ...c, star: u.s || 1, items: (u.it || []).map(hydrateItemByName) };
+};
+const packReplayHistory = (hist) => (hist || []).map(f => ({
+  l: f.label || '', rd: f.round, g: f.gold, lv: f.level, xp: f.xp, fr: f.freeRerolls || 0,
+  au: (f.augments || []).map(a => ({ n: a.name, tr: a.tier, ic: a.icon || '' })),
+  iv: (f.inventory || []).map(it => ({ n: (it && it.name) || '', ic: (it && it.icon) || '', id: (it && it.id) || '', c: (it && it.count) || 1 })),
+  bd: (f.board || []).map(packReplayUnit), bn: (f.bench || []).map(packReplayUnit), sh: (f.shop || []).map(packReplayUnit),
+}));
+const unpackReplayHistory = (packed) => (Array.isArray(packed) ? packed : []).map(f => ({
+  label: f.l || '', round: f.rd, gold: f.g, level: f.lv, xp: f.xp, freeRerolls: f.fr || 0,
+  augments: (f.au || []).map(a => ({ name: a.n, tier: a.tr, icon: a.ic })),
+  inventory: (f.iv || []).map(it => it.id ? { name: it.n, icon: it.ic, id: it.id, count: it.c } : { name: it.n, icon: it.ic }),
+  board: (f.bd || []).map(unpackReplayUnit), bench: (f.bn || []).map(unpackReplayUnit), shop: (f.sh || []).map(unpackReplayUnit),
+}));
 
 const createRNG = (seed) => {
   let h = 2166136261 >>> 0;
@@ -1075,6 +1123,7 @@ function SeedStatsDrawer({ seed, open, onClose }) {
   const [errMsg, setErrMsg] = useState(null);
   const [featured, setFeatured] = useState({ riotIds: [], discordIds: [] }); // ⭐ Firestore側の注目プレイヤーリスト
   const [boardView, setBoardView] = useState(null); // 🏆 盤面モーダルで表示中の記録
+  const [replayView, setReplayView] = useState(null); // 🎬 振り返り再生中の記録 { frames, seed }
   // 記録は {name, tier} しか持たないため、名前からオーグメント本体（imgName）を引く
   const augMetaByName = (name) => {
     for (const t of ['silver', 'gold', 'prismatic']) {
@@ -1167,6 +1216,13 @@ function SeedStatsDrawer({ seed, open, onClose }) {
   const starsTxt = (star) => '★'.repeat(star);
 
   return (
+    <React.Fragment>
+    {/* 🎬 振り返り（ドロワーより手前に表示） */}
+    {replayView && (
+      <div style={{ position: 'fixed', inset: 0, zIndex: 9999 }}>
+        <ReplayViewer history={replayView.frames} seed={replayView.seed} onClose={() => setReplayView(null)} />
+      </div>
+    )}
     <div style={{ position: 'fixed', top: 0, right: 0, height: '100vh', width: 'min(400px, 94vw)', zIndex: 9600,
       background: C.bg, borderLeft: '1px solid var(--border)', boxShadow: '-12px 0 40px rgba(0,0,0,0.6)',
       transform: open ? 'translateX(0)' : 'translateX(105%)', transition: 'transform 0.3s cubic-bezier(0.4,0,0.2,1)',
@@ -1260,6 +1316,14 @@ function SeedStatsDrawer({ seed, open, onClose }) {
                                 {r.data.level != null && <span style={{ color: '#7fd0ff' }}>最終 LV {r.data.level}</span>}
                                 {r.data.gold != null && <span style={{ color: 'var(--gold2)' }}>🪙 {r.data.gold}G</span>}
                               </div>
+                            )}
+                            {/* 🎬 振り返り（手順が記録されている場合のみ） */}
+                            {(r.replay || []).length > 0 && (
+                              <button onClick={() => setReplayView({ frames: unpackReplayHistory(r.replay), seed: r.seed })}
+                                style={{ padding: '7px 16px', borderRadius: 8, fontSize: 12, fontWeight: 900, cursor: 'pointer',
+                                  color: 'white', background: 'var(--gold2)', border: '1px solid var(--gold2)' }}>
+                                🎬 振り返りを見る（{r.replay.length}コマ）
+                              </button>
                             )}
                             {/* 盤面（座標＋装備付き記録から結果画面と同じ見た目で再現） */}
                             <div>
@@ -1362,6 +1426,7 @@ function SeedStatsDrawer({ seed, open, onClose }) {
         )}
       </div>
     </div>
+    </React.Fragment>
   );
 }
 
@@ -2486,6 +2551,100 @@ function ShopPickerScreen({ ov, setOvKey, onBack }) {
   );
 }
 
+/* ── 🎁 配布チャンピオン指定 専用画面（設定から開く） ──
+   固定した遭遇（ビクター/ミィプシー/ミスフォーチュン/リサンドラ）が配る駒を1体ずつ指定する。 */
+function EncChampPickerScreen({ ov, setOvKey, onBack }) {
+  const encList = (typeof ENCOUNTERS !== 'undefined' ? ENCOUNTERS : []);
+  const allChamps = (typeof CHAMPS !== 'undefined' ? CHAMPS : []);
+  const selEncId = ov.encounter || null;
+  const spec = selEncId ? ENC_CHAMP_SPECS[selEncId] : null;
+  const selEnc = encList.find(e => e.id === selEncId) || null;
+  const ec = (ov.encounterChamps && typeof ov.encounterChamps === 'object') ? ov.encounterChamps : {};
+  const getArr = (id) => Array.isArray(ec[id]) ? ec[id] : [];
+  const row = getArr(selEncId);
+  const pool = spec ? allChamps.filter(c => c.cost === spec.cost) : [];
+  const setSlot = (i, id) => {
+    if (!selEncId || !spec) return;
+    const arr = [];
+    for (let k = 0; k < spec.count; k++) arr[k] = getArr(selEncId)[k] || null;
+    arr[i] = id || null;
+    const next = { ...ec };
+    if (arr.some(Boolean)) next[selEncId] = arr; else delete next[selEncId];
+    const any = Object.keys(next).some(k => (next[k] || []).some(Boolean));
+    setOvKey({ encounterChamps: any ? next : null });
+  };
+  const clearThis = () => {
+    if (!selEncId) return;
+    const next = { ...ec }; delete next[selEncId];
+    const any = Object.keys(next).some(k => (next[k] || []).some(Boolean));
+    setOvKey({ encounterChamps: any ? next : null });
+  };
+  const setCount = row.filter(Boolean).length;
+  const selStyle = { padding: '8px 9px', borderRadius: 8, background: 'rgba(15,23,42,0.9)', color: '#fff', border: '1px solid var(--border)', fontSize: 12, fontFamily: 'Noto Sans JP', cursor: 'pointer' };
+
+  return (
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14, padding: 16,
+      backgroundImage: `linear-gradient(rgba(0,0,0,0.82), rgba(0,0,0,0.82)), url("https://assets.st-note.com/production/uploads/images/263587712/rectangle_large_type_2_386d7257054746a6649e14bdb1432725.jpeg?width=4000&height=4000&fit=bounds&format=jpg&quality=90")`,
+      backgroundSize: 'cover', backgroundPosition: 'center', animation: 'fadeIn 0.4s ease' }}>
+      <div style={{ fontFamily: 'Orbitron', fontSize: 'clamp(18px,4vw,30px)', fontWeight: 900, color: '#fff', letterSpacing: 4, textShadow: '0 0 10px rgba(0,0,0,0.9), 0 0 18px var(--gold)', marginTop: 4 }}>🎁 配布チャンピオンを指定</div>
+
+      <div style={{ width: 'min(760px, 96vw)', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 12, background: 'rgba(8,16,26,0.85)', border: '1px solid var(--border)', borderRadius: 16, padding: 16, boxShadow: '0 20px 60px rgba(0,0,0,0.6)' }}>
+
+        {!spec ? (
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, textAlign: 'center', padding: 20 }}>
+            <div style={{ fontSize: 40 }}>🎲</div>
+            <div style={{ color: '#fff', fontWeight: 900, fontSize: 15 }}>先に「遭遇を選択」で配布のある遭遇を固定してください</div>
+            <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: 12.5, lineHeight: 1.7 }}>
+              駒を配る遭遇：<b style={{ color: '#fff' }}>ビクター</b>（1コス★2×1）／<b style={{ color: '#fff' }}>ミィプシー</b>（2コス×1）／<b style={{ color: '#fff' }}>ミスフォーチュン</b>（3コス×1）／<b style={{ color: '#fff' }}>リサンドラ</b>（1コス×5）<br />
+              {selEnc ? `現在の固定遭遇「${selEnc.champ}」は駒を配りません。` : '遭遇がランダムのままだと指定できません。'}
+            </div>
+          </div>
+        ) : (
+          <React.Fragment>
+            <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: 11.5, lineHeight: 1.6, flexShrink: 0 }}>
+              固定遭遇 <b style={{ color: 'var(--gold2)' }}>{selEnc ? selEnc.champ : ''}</b>（{spec.label}）が配る駒を指定できます。「ランダム」のままの枠は従来通りの抽選です。
+            </div>
+            <div style={{ flex: 1, minHeight: 80, overflowY: 'auto', paddingRight: 4, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 10 }}>
+              {Array.from({ length: spec.count }).map((_, i) => {
+                const selId = row[i] || null;
+                const selChamp = selId ? allChamps.find(c => c.id === selId) : null;
+                return (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(11,22,34,0.7)', border: `1px solid ${selChamp ? COST_COLORS[selChamp.cost] : 'var(--border)'}`, borderRadius: 10, padding: '9px 10px' }}>
+                    <div style={{ width: 40, height: 40, borderRadius: 7, overflow: 'hidden', flexShrink: 0, background: '#1e293b', border: `2px solid ${selChamp ? COST_COLORS[selChamp.cost] : 'var(--border)'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
+                      {selChamp
+                        ? <React.Fragment>
+                            <img src={boardIcon(selChamp.img)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            {spec.star > 1 && <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, display: 'flex', justifyContent: 'center', transform: 'scale(0.6)', transformOrigin: 'bottom' }}><Stars star={spec.star} /></div>}
+                          </React.Fragment>
+                        : <span style={{ fontSize: 15, color: 'rgba(255,255,255,0.35)' }}>{i + 1}</span>}
+                    </div>
+                    <select style={{ ...selStyle, flex: 1, minWidth: 0 }} value={selId || ''} onChange={e => setSlot(i, e.target.value || null)}>
+                      <option value="">ランダム（{i + 1}体目）</option>
+                      {pool.map(c => (<option key={c.id} value={c.id}>{c.jaName}</option>))}
+                    </select>
+                  </div>
+                );
+              })}
+            </div>
+          </React.Fragment>
+        )}
+
+        {/* フッター */}
+        <div style={{ display: 'flex', gap: 10, flexShrink: 0 }}>
+          <button onClick={clearThis} disabled={setCount === 0}
+            style={{ flex: '0 0 auto', padding: '11px 16px', borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: setCount === 0 ? 'default' : 'pointer',
+              color: '#fff', background: setCount === 0 ? 'rgba(80,20,20,0.35)' : 'rgba(80,20,20,0.7)', border: '1px solid var(--red)', opacity: setCount === 0 ? 0.5 : 1 }}>
+            ↺ この遭遇をランダムに戻す
+          </button>
+          <button onClick={onBack} className="menu-btn" style={{ flex: 1, background: 'var(--blue)', color: '#fff', borderColor: 'var(--blue)', fontWeight: 900 }}>
+            ✓ 設定に戻る{spec ? `（${setCount}/${spec.count} 指定中）` : ''}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ── メインアプリ ── */
 /* ── メインアプリ ── */
 function SettingsScreen({ bindings, onChange, overrides = DEFAULT_OVERRIDES, onChangeOverrides = () => {}, onBack, onStartNewGame = null, backLabel = 'メニューに戻る' }) {
@@ -2496,6 +2655,7 @@ function SettingsScreen({ bindings, onChange, overrides = DEFAULT_OVERRIDES, onC
   const [augPickerOpen, setAugPickerOpen] = useState(false); // 🌟 オーグメント指定の別画面
   const [dropPickerOpen, setDropPickerOpen] = useState(false); // 🌟 ドロップ設定の別画面
   const [shopPickerOpen, setShopPickerOpen] = useState(false); // 🌟 ショップ指定の別画面
+  const [encPickerOpen, setEncPickerOpen] = useState(false); // 🎁 配布チャンピオン指定の別画面
 
   // 入力待ち中：次に押されたキーを割り当てる
   useEffect(() => {
@@ -2631,6 +2791,17 @@ function SettingsScreen({ bindings, onChange, overrides = DEFAULT_OVERRIDES, onC
     );
   }
 
+  // 🎁 配布チャンピオン指定も専用の別画面で行う
+  if (encPickerOpen) {
+    return (
+      <EncChampPickerScreen
+        ov={ov}
+        setOvKey={setOvKey}
+        onBack={() => setEncPickerOpen(false)}
+      />
+    );
+  }
+
   return (
     <div style={{ height:'100vh', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:18, backgroundImage:`linear-gradient(rgba(0,0,0,0.78), rgba(0,0,0,0.78)), url("https://assets.st-note.com/production/uploads/images/263587712/rectangle_large_type_2_386d7257054746a6649e14bdb1432725.jpeg?width=4000&height=4000&fit=bounds&format=jpg&quality=90")`, backgroundSize:'cover', backgroundPosition:'center', padding:16, animation:'fadeIn 0.6s ease' }}>
       <div style={{ fontFamily:'Orbitron', fontSize:'clamp(20px,4.5vw,36px)', fontWeight:900, color:'#fff', letterSpacing:6, textShadow:'0 0 10px rgba(0,0,0,0.9), 0 0 20px var(--gold)' }}>
@@ -2731,6 +2902,44 @@ function SettingsScreen({ bindings, onChange, overrides = DEFAULT_OVERRIDES, onC
           {forcedTier && (
             <div style={{ marginTop:8, color:'var(--gold2)', fontSize:11 }}>※ この遭遇はオーグメントを「{TIER_JA[forcedTier]}」に固定します。</div>
           )}
+        </div>
+
+        {/* 🎯 開始時デフォルト1コス指定 */}
+        <div style={{ marginBottom:16 }}>
+          <div style={fLabel}>🎯 開始時の1コス <span style={{ color:'rgba(255,255,255,0.45)', fontWeight:400 }}>（遭遇に関係なく1-1で配られる駒を固定）</span></div>
+          <select style={selStyle} value={ov.startChamp || ''} onChange={e => setOvKey({ startChamp: e.target.value || null })}>
+            <option value="">ランダム</option>
+            {(typeof CHAMPS !== 'undefined' ? CHAMPS : []).filter(c => c.cost === 1).map(c => (<option key={c.id} value={c.id}>{c.jaName}</option>))}
+          </select>
+          {ov.encounter && ['viktor','miipsy','missfortune','lissandra'].includes(ov.encounter) && (
+            <div style={{ marginTop:6, color:'rgba(255,255,255,0.5)', fontSize:11 }}>※ 現在の固定遭遇は独自に駒を配るため、この指定は無効です（下の「配布チャンピオン」で指定してください）。</div>
+          )}
+        </div>
+
+        {/* 🎁 配布チャンピオン指定（別画面ピッカー） */}
+        <div style={{ marginBottom:16 }}>
+          <div style={fLabel}>🎁 配布チャンピオン <span style={{ color:'rgba(255,255,255,0.45)', fontWeight:400 }}>（遭遇でもらえる駒を固定）</span></div>
+          {(() => {
+            const spec = ov.encounter ? ENC_CHAMP_SPECS[ov.encounter] : null;
+            const arr = (ov.encounterChamps && ov.encounterChamps[ov.encounter]) || [];
+            const cnt = Array.isArray(arr) ? arr.filter(Boolean).length : 0;
+            return (
+              <button onClick={() => setEncPickerOpen(true)}
+                style={{ width:'100%', padding:'13px 16px', borderRadius:10, cursor:'pointer', fontFamily:'Noto Sans JP', fontWeight:900, fontSize:13.5,
+                  display:'flex', alignItems:'center', justifyContent:'center', gap:10, transition:'all 0.15s',
+                  color: cnt>0 ? '#08101a' : '#fff',
+                  background: cnt>0 ? 'var(--gold2)' : 'rgba(15,23,42,0.85)',
+                  border:`2px solid ${cnt>0 ? 'var(--gold2)' : 'var(--blue)'}`,
+                  boxShadow: cnt>0 ? '0 0 14px var(--gold)' : 'none' }}>
+                配布チャンピオンを指定
+                <span style={{ fontSize:11, fontWeight:700, padding:'2px 8px', borderRadius:20,
+                  background: cnt>0 ? 'rgba(8,16,26,0.25)' : 'rgba(255,255,255,0.12)',
+                  color: cnt>0 ? '#08101a' : 'rgba(255,255,255,0.8)' }}>
+                  {spec ? (cnt>0 ? `${cnt}/${spec.count} 指定中` : '未指定') : '遭遇を固定で有効'}
+                </span>
+              </button>
+            );
+          })()}
         </div>
 
         {/* オーグメントティア */}
@@ -3252,6 +3461,12 @@ function Main() {
       <React.Fragment>
       {globalStatsDrawer}
       <div style={{ height:'100vh', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:30, backgroundImage:`linear-gradient(rgba(0,0,0,0.6), rgba(0,0,0,0.6)), url("https://assets.st-note.com/production/uploads/images/263587712/rectangle_large_type_2_386d7257054746a6649e14bdb1432725.jpeg?width=4000&height=4000&fit=bounds&format=jpg&quality=90")`, backgroundSize:'cover', backgroundPosition:'center', padding:20, animation:'fadeIn 1s ease' }}>
+        {/* 🌗 テーマ切替（右上・小さめの丸ボタン） */}
+        <button onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+          title={theme === 'dark' ? 'ライトモードに切替' : 'ダークモードに切替'}
+          style={{ position:'fixed', top:16, right:16, zIndex:60, width:44, height:44, borderRadius:'50%', border:'1px solid var(--border)', background:'rgba(15,23,42,0.85)', color:'#fff', fontSize:20, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', boxShadow:'0 4px 14px rgba(0,0,0,0.45)' }}>
+          {theme === 'dark' ? '☀️' : '🌙'}
+        </button>
 <div style={{ 
   fontFamily:'Orbitron', 
   fontSize:'clamp(30px, 8vw, 70px)', // 改行するので少し小さめに調整
@@ -3298,43 +3513,52 @@ function Main() {
           <button 
             className="menu-btn" 
             style={{ width:220, background:'rgba(15,23,42,0.8)', color:'white', borderColor:'var(--border)', boxShadow:'0 10px 30px rgba(0,0,0,0.5)', transition:'all 0.2s ease', cursor:'pointer' }} 
-            onClick={() => setView('HISTORY')}
+            onClick={() => setView('MYPAGE')}
             onMouseEnter={e => { e.currentTarget.style.transform = 'scale(1.05)'; e.currentTarget.style.background = 'rgba(30,45,74,0.9)'; }}
             onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.background = 'rgba(15,23,42,0.8)'; }}
           >
-            📜 回答履歴
+            🙍 マイページ{account && (account.riot || account.discord) ? ' ✓' : ''}
           </button>
-          <button 
-            className="menu-btn" 
-            style={{ width:220, background:'rgba(15,23,42,0.8)', color:'white', borderColor:'var(--border)', boxShadow:'0 10px 30px rgba(0,0,0,0.5)', transition:'all 0.2s ease', cursor:'pointer' }} 
-            onClick={() => setView('ACCOUNT')}
-            onMouseEnter={e => { e.currentTarget.style.transform = 'scale(1.05)'; e.currentTarget.style.background = 'rgba(30,45,74,0.9)'; }}
-            onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.background = 'rgba(15,23,42,0.8)'; }}
-          >
-            👤 アカウント連携{account && (account.riot || account.discord) ? ' ✓' : ''}
-          </button>
-          <button 
-            className="menu-btn" 
-            style={{ width:220, background:'rgba(15,23,42,0.8)', color:'white', borderColor:'var(--border)', boxShadow:'0 10px 30px rgba(0,0,0,0.5)', transition:'all 0.2s ease', cursor:'pointer' }} 
-            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-            onMouseEnter={e => { e.currentTarget.style.transform = 'scale(1.05)'; e.currentTarget.style.background = 'rgba(30,45,74,0.9)'; }}
-            onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.background = 'rgba(15,23,42,0.8)'; }}
-          >
-            {theme === 'dark' ? '☀️ ライトモードに切替' : '🌙 ダークモードに切替'}
-          </button>
-          {isAdminAccount(account, remoteAdmins) && (
-            <button 
-              className="menu-btn" 
-              style={{ width:220, background:'rgba(94,74,22,0.85)', color:'#ffd76e', borderColor:'var(--gold)', boxShadow:'0 10px 30px rgba(0,0,0,0.5)', transition:'all 0.2s ease', cursor:'pointer' }} 
-              onClick={() => { window.location.href = 'sim-editor.html'; }}
-              onMouseEnter={e => { e.currentTarget.style.transform = 'scale(1.05)'; }}
-              onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)'; }}
-            >
-              🛠️ エディタ（管理者）
-            </button>
-          )}
         </div>
       </div>
+      </React.Fragment>
+    );
+  }
+
+  if (view === 'MYPAGE') {
+    const myBtn = (label, onClick, extra = {}) => (
+      <button className="menu-btn"
+        style={{ width:260, background:'rgba(15,23,42,0.8)', color:'white', borderColor:'var(--border)', boxShadow:'0 10px 30px rgba(0,0,0,0.5)', transition:'all 0.2s ease', cursor:'pointer', ...extra }}
+        onClick={onClick}
+        onMouseEnter={e => { e.currentTarget.style.transform = 'scale(1.05)'; }}
+        onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)'; }}>
+        {label}
+      </button>
+    );
+    return (
+      <React.Fragment>
+        {globalStatsDrawer}
+        <div style={{ height:'100vh', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:26, backgroundImage:`linear-gradient(rgba(0,0,0,0.62), rgba(0,0,0,0.62)), url("https://assets.st-note.com/production/uploads/images/263587712/rectangle_large_type_2_386d7257054746a6649e14bdb1432725.jpeg?width=4000&height=4000&fit=bounds&format=jpg&quality=90")`, backgroundSize:'cover', backgroundPosition:'center', padding:20, animation:'fadeIn 0.6s ease' }}>
+          {/* 🌗 テーマ切替（右上・小さめの丸ボタン） */}
+          <button onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+            title={theme === 'dark' ? 'ライトモードに切替' : 'ダークモードに切替'}
+            style={{ position:'fixed', top:16, right:16, zIndex:60, width:44, height:44, borderRadius:'50%', border:'1px solid var(--border)', background:'rgba(15,23,42,0.85)', color:'#fff', fontSize:20, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', boxShadow:'0 4px 14px rgba(0,0,0,0.45)' }}>
+            {theme === 'dark' ? '☀️' : '🌙'}
+          </button>
+          <div style={{ fontFamily:'Orbitron', fontSize:'clamp(26px, 6vw, 44px)', fontWeight:900, color:'#fff', letterSpacing:8, textShadow:'0 0 5px rgba(0,0,0,1),0 0 20px var(--gold)', transform:'skewX(-5deg)' }}>🙍 MY PAGE</div>
+          <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
+            {myBtn(`👤 アカウント連携${account && (account.riot || account.discord) ? ' ✓' : ''}`, () => setView('ACCOUNT'))}
+            {myBtn('📜 回答履歴', () => setView('HISTORY'))}
+            {isAdminAccount(account, remoteAdmins) &&
+              myBtn('🛠️ 管理者ページ', () => { window.location.href = 'sim-editor.html'; },
+                { background:'rgba(94,74,22,0.85)', color:'#ffd76e', borderColor:'var(--gold)' })}
+          </div>
+          <button className="menu-btn"
+            style={{ width:260, marginTop:6, background:'rgba(15,23,42,0.85)', color:'white', borderColor:'var(--border)', boxShadow:'0 10px 30px rgba(0,0,0,0.5)', cursor:'pointer' }}
+            onClick={() => setView('MENU')}>
+            🏠 HOMEに戻る
+          </button>
+        </div>
       </React.Fragment>
     );
   }
@@ -3342,7 +3566,7 @@ function Main() {
   if (view === 'ACCOUNT') {
     return (
       <React.Fragment>
-        <AccountScreen account={account} onChangeAccount={changeAccount} onBack={() => setView('MENU')} />
+        <AccountScreen account={account} onChangeAccount={changeAccount} onBack={() => setView('MYPAGE')} />
         {globalStatsDrawer}
       </React.Fragment>
     );
@@ -3353,7 +3577,7 @@ function Main() {
       <HistoryScreen
         account={account}
         onChangeAccount={changeAccount}
-        onBack={() => setView('MENU')}
+        onBack={() => setView('MYPAGE')}
         onPlay={(rec) => {
           // 📜 履歴からの再挑戦：当時の設定（ov）も復元して同じ条件で開始する
           const ovObj = rec.ov ? decodeOverrides(rec.ov) : { ...DEFAULT_OVERRIDES };
@@ -3555,6 +3779,7 @@ function App({ seed, onRestart, onNewGame, onHome = () => {}, keyBindings = DEFA
       uid: uidOfPlayer(acctPlayer),     // 🆔 サーバー側の回答履歴検索用
       cheat: !!ovCode,                  // 設定変更の有無
       ov: ovCode || '',
+      replay: packReplayHistory(historyRef.current),   // 🎬 手順つきリプレイ（圧縮）
       data: {
         level, gold,
         augments: augments.map(a => ({ name: a.name, tier: a.tier })),
@@ -4671,7 +4896,9 @@ useEffect(() => {
 
       if (!skipDefaultChamp) {
         const pool = CHAMPS.filter(c => c.cost === 1);
-        const chosen = pool[Math.floor(rngMisc() * pool.length)];
+        const natural = pool[Math.floor(rngMisc() * pool.length)];   // 🎯 常に引く（固定でも乱数消費は不変）
+        const pin = (gameOverrides && gameOverrides.startChamp) ? pool.find(c => c.id === gameOverrides.startChamp) : null;
+        const chosen = pin || natural;
         const unit = { ...chosen, star: 1, uid: rngMisc(), items: [] };
         
         setBoard(prev => {
@@ -4703,7 +4930,9 @@ useEffect(() => {
       if (encounter && encounter.effect && !encounterAppliedRef.current) {
         encounterAppliedRef.current = true;
         try {
-          encounter.effect({ gold, level, xp }, rngEnc, augmentHelpers);
+          // 🎁 配布チャンピオン指定：この遭遇に対する固定配列（無ければ null）
+          const encChamps = (gameOverrides && gameOverrides.encounterChamps && gameOverrides.encounterChamps[encounter.id]) || null;
+          encounter.effect({ gold, level, xp, encChamps }, rngEnc, augmentHelpers);
         } catch (e) {
           console.error('encounter effect error', e);
         }
@@ -5352,13 +5581,12 @@ const handleAugmentPick = (aug, historyContext) => {
         <SeedStatsDrawer seed={statSeed} open={showSeedStats} onClose={() => setShowSeedStats(false)} />
 
         {/* 🌟 1. ボタン類を上部に集約！シード値コピーもここへ移動 */}
-        <div style={{display:'flex', gap:12, marginBottom:5}}>
-          <button className="menu-btn" onClick={() => setShowReplay(true)} style={{padding:'10px 20px',fontSize:13, background:'var(--gold2)', color:'#08101a', borderColor:'var(--gold2)', fontWeight:900}}>🎬 振り返り</button>
+        <div style={{display:'flex', gap:12, marginBottom:5, flexWrap:'wrap', justifyContent:'center'}}>
+          <button className="menu-btn" onClick={onHome} style={{padding:'10px 20px',fontSize:13, background:'rgba(15,23,42,0.85)', color:'white', borderColor:'var(--border)'}}>🏠 HOMEに戻る</button>
+          <button className="menu-btn" onClick={() => setShowReplay(true)} style={{padding:'10px 20px',fontSize:13, background:'var(--gold2)', color:'white', borderColor:'var(--gold2)', fontWeight:900}}>🎬 振り返り</button>
           <button className="menu-btn" onClick={openSeedStats} style={{padding:'10px 20px',fontSize:13, background:'var(--purple)', color:'white', borderColor:'var(--purple)', fontWeight:900}}>📊 みんなの結果</button>
           <button className="menu-btn" onClick={onRestart} style={{padding:'10px 20px',fontSize:13, background:'var(--blue)', color:'white', borderColor:'var(--blue)'}}>同じシードで再挑戦</button>
           <button className="menu-btn" onClick={onNewGame} style={{padding:'10px 20px',fontSize:13, background:'var(--teal)', color:'white', borderColor:'var(--teal)'}}>新しいゲーム</button>
-          <button className="menu-btn" onClick={onHome} style={{padding:'10px 20px',fontSize:13, background:'rgba(15,23,42,0.85)', color:'white', borderColor:'var(--border)'}}>🏠 HOMEに戻る</button>
-          <button className="menu-btn" onClick={() => setShowSettings(true)} style={{padding:'10px 20px',fontSize:13, background:'rgba(15,23,42,0.85)', color:'white', borderColor:'var(--border)'}}>⚙️ 設定</button>
 <button 
   className="menu-btn" 
   onClick={() => {
@@ -5402,6 +5630,7 @@ const handleAugmentPick = (aug, historyContext) => {
           >
             {isSaving ? '⏳ 処理中...' : '📸 画像をコピー'}
           </button>
+          <button className="menu-btn" onClick={() => setShowSettings(true)} style={{padding:'10px 20px',fontSize:13, background:'rgba(15,23,42,0.85)', color:'white', borderColor:'var(--border)'}}>⚙️ 設定</button>
         </div>
 
         {/* 🌟 キャプチャ対象エリア */}
