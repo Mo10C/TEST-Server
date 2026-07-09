@@ -2132,8 +2132,11 @@ const AugmentScreen = ({ onPick, rng, augmentTierBoost = 0, isNoMoreAugments = f
           </div>
 
           <div style={{ display: 'flex', gap: 25, flexWrap: 'wrap', justifyContent: 'center', alignItems: 'flex-start', animation: 'fadeIn 0.6s ease' }}>
+            {/* 🔑 key は枠インデックス固定にする（aug.id を key にすると、
+                 指定オーグメントが自然抽選の別枠と同一idになった時に key が衝突し、
+                 リロール時にカードDOMが破棄されず残留して「4枚に見える」バグの原因になる） */}
             {choices.map((aug, i) => (
-              <div key={aug.id} style={{ display: 'flex', flexDirection: 'column', gap: 15, width: 250 }}>
+              <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 15, width: 250 }}>
                 <div
                   onClick={() => onPick(aug, { 
                     tier, 
@@ -3111,7 +3114,7 @@ function HistoryScreen({ account, onChangeAccount, onBack, onPlay }) {
   const [loading, setLoading] = useState(false);
   const [serverMode, setServerMode] = useState(false);  // 🌐 サーバー取得に成功したか
   const [errMsg, setErrMsg] = useState(null);
-  const [openIdx, setOpenIdx] = useState(null);
+  const [selKey, setSelKey] = useState(null);   // 📍 選択中の履歴（recKeyで保持。サーバーマージで順序が変わってもズレない）
   const [statsSeed, setStatsSeed] = useState(null);   // 📊 ドロワーで開く統計用シード
   const [gateOpen, setGateOpen] = useState(false);    // 🔐 アカウント連携ゲート
   const pendingStatsRef = useRef(null);
@@ -3150,6 +3153,12 @@ function HistoryScreen({ account, onChangeAccount, onBack, onPlay }) {
     return () => { alive = false; };
   }, [account]);
 
+  // 📍 items が更新されたら、選択が失われていれば先頭（最新）を自動選択する
+  useEffect(() => {
+    if (items.length === 0) { if (selKey !== null) setSelKey(null); return; }
+    if (!items.some(i => recKey(i) === selKey)) setSelKey(recKey(items[0]));
+  }, [items]);
+
   const champById = (id) => (typeof CHAMPS !== 'undefined' ? CHAMPS : []).find(c => c.id === id);
   const TIER_TXT = { silver: 'var(--silver)', gold: 'var(--gold2)', prismatic: 'var(--prismatic)' };
   const fmtDate = (ts) => { try { const d = new Date(ts); return `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; } catch (e) { return ''; } };
@@ -3171,19 +3180,21 @@ function HistoryScreen({ account, onChangeAccount, onBack, onPlay }) {
     const next = loadMyHistory().filter(l => recKey(l) !== recKey(rec));
     saveMyHistory(next);
     setItems(prev => prev.filter(i => recKey(i) !== recKey(rec)));
-    setOpenIdx(null);
+    if (selKey === recKey(rec)) setSelKey(null);   // 選択中を消したら先頭が再選択される（上のuseEffect）
   };
   const removeAll = () => {
     if (!window.confirm('ローカルに保存された回答履歴をすべて削除しますか？（この操作は取り消せません）\n※ サーバーに保存済みの記録は残ります')) return;
     saveMyHistory([]);
     setItems(prev => prev.filter(i => i.fromServer));
-    setOpenIdx(null);
+    setSelKey(null);
   };
 
+  const BG = `linear-gradient(rgba(0,0,0,0.75), rgba(0,0,0,0.75)), url("https://assets.st-note.com/production/uploads/images/263587712/rectangle_large_type_2_386d7257054746a6649e14bdb1432725.jpeg?width=4000&height=4000&fit=bounds&format=jpg&quality=90")`;
+  const selRec = items.find(i => recKey(i) === selKey) || null;
+
   return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: 16, gap: 12, overflow: 'hidden',
-      backgroundImage: `linear-gradient(rgba(0,0,0,0.75), rgba(0,0,0,0.75)), url("https://assets.st-note.com/production/uploads/images/263587712/rectangle_large_type_2_386d7257054746a6649e14bdb1432725.jpeg?width=4000&height=4000&fit=bounds&format=jpg&quality=90")`,
-      backgroundSize: 'cover', backgroundPosition: 'center', animation: 'fadeIn 0.5s ease' }}>
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'row', overflow: 'hidden',
+      backgroundImage: BG, backgroundSize: 'cover', backgroundPosition: 'center', animation: 'fadeIn 0.5s ease' }}>
 
       {/* 🔐 アカウント連携ゲート */}
       {gateOpen && (
@@ -3195,126 +3206,156 @@ function HistoryScreen({ account, onChangeAccount, onBack, onPlay }) {
       {/* 📊 みんなの結果ドロワー */}
       <SeedStatsDrawer seed={statsSeed || ''} open={!!statsSeed} onClose={() => setStatsSeed(null)} />
 
-      <div style={{ width: 'min(720px, 96vw)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
-        <div style={{ fontFamily: 'Orbitron', fontSize: 20, fontWeight: 900, color: '#fff', letterSpacing: 3, textShadow: '0 0 10px var(--gold)' }}>📜 回答履歴</div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          {items.some(i => !i.fromServer) && (
-            <button className="menu-btn" style={{ padding: '8px 14px', fontSize: 12, background: 'rgba(80,20,20,0.7)', color: '#fff', borderColor: 'var(--red)' }} onClick={removeAll}>🗑 ローカル分を全削除</button>
-          )}
-          <button className="menu-btn" style={{ padding: '8px 14px', fontSize: 12, background: 'var(--blue)', color: '#fff', borderColor: 'var(--blue)' }} onClick={onBack}>メニューに戻る</button>
+      {/* ══════════ 左カラム：シード値のリスト ══════════ */}
+      <div style={{ width: 'clamp(260px, 42%, 440px)', height: '100%', display: 'flex', flexDirection: 'column', gap: 10, padding: '14px 12px', boxSizing: 'border-box', borderRight: '1px solid rgba(255,255,255,0.15)', background: 'rgba(0,0,0,0.28)' }}>
+        {/* ヘッダー */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexShrink: 0 }}>
+          <div style={{ fontFamily: 'Orbitron', fontSize: 17, fontWeight: 900, color: '#fff', letterSpacing: 2, textShadow: '0 0 10px var(--gold)' }}>📜 回答履歴</div>
+          <button className="menu-btn" style={{ padding: '7px 12px', fontSize: 11.5, background: 'var(--blue)', color: '#fff', borderColor: 'var(--blue)' }} onClick={onBack}>戻る</button>
         </div>
-      </div>
 
-      {/* 取得元の表示 */}
-      <div style={{ width: 'min(720px, 96vw)', fontSize: 10.5, color: 'rgba(255,255,255,0.65)', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        {loading ? '⏳ サーバーの記録を読み込み中…'
-          : serverMode ? '🌐 サーバーの記録を優先表示中（サーバーに無い分はこのブラウザの記録 💾 で補完）'
-          : uidOfAccount(account)
-            ? <span>⚠ サーバーの記録を取得できませんでした（このブラウザの記録のみ表示中）{errMsg ? `: ${errMsg}` : ''}</span>
-            : '💾 このブラウザの記録のみ表示中（アカウント連携するとサーバーに保存された記録も表示されます）'}
-      </div>
+        {/* 取得元 */}
+        <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.6)', flexShrink: 0, lineHeight: 1.45 }}>
+          {loading ? '⏳ サーバーの記録を読み込み中…'
+            : serverMode ? '🌐 サーバー優先表示中（不足分は 💾 で補完）'
+            : uidOfAccount(account)
+              ? <span>⚠ サーバー取得に失敗（💾 のみ表示）{errMsg ? `: ${errMsg}` : ''}</span>
+              : '💾 このブラウザの記録のみ（連携でサーバー記録も表示）'}
+        </div>
 
-      {/* 🌟 minHeight:0 が無いと flex 子要素が中身の高さまで広がってしまい、
-             リストがスクロールできず下のボタンが画面外に切れて見えなくなる */}
-      <div style={{ width: 'min(720px, 96vw)', flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', display: 'flex', flexDirection: 'column', gap: 8, paddingBottom: 24 }}>
-        {items.length === 0 && (
-          <div style={{ textAlign: 'center', color: 'rgba(255,255,255,0.7)', fontSize: 13, padding: 40, lineHeight: 2, background: 'rgba(8,16,26,0.7)', borderRadius: 12, border: '1px solid var(--border)' }}>
-            まだ回答履歴がありません。<br />ゲームを最後までプレイすると、結果が自動でここに保存されます。
-          </div>
-        )}
-        {items.map((rec, idx) => {
-          const isOpen = openIdx === idx;
-          const d = rec.data || {};
-          return (
-            <div key={rec.ts + '_' + idx} style={{ border: `1px solid ${isOpen ? 'var(--gold2)' : 'var(--border)'}`, borderRadius: 10, overflow: 'hidden', background: 'rgba(8,16,26,0.85)' }}>
-              {/* 行ヘッダー */}
-              <div onClick={(e) => {
-                  const el = e.currentTarget.parentElement;
-                  setOpenIdx(isOpen ? null : idx);
-                  // 開いた時に展開部が画面外に出ないようスクロールで追従
-                  if (!isOpen && el) setTimeout(() => { try { el.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch (err) {} }, 60);
-                }}
-                style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', cursor: 'pointer' }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 12.5, fontWeight: 900, color: '#fff', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                    <span style={{ fontFamily: 'Orbitron', letterSpacing: 1 }}>SEED: {rec.seed}</span>
-                    {rec.ov ? <span style={{ fontSize: 10, color: 'var(--gold2)' }}>⚙️設定変更あり</span> : null}
-                    <span style={{ fontSize: 9.5, color: rec.fromServer ? '#7fd0ff' : 'rgba(255,255,255,0.5)', border: '1px solid rgba(255,255,255,0.25)', borderRadius: 4, padding: '1px 5px' }} title={rec.fromServer ? 'サーバー（共有データ）に保存済みの記録' : 'このブラウザにのみ保存されている記録'}>{rec.fromServer ? '🌐 サーバー' : '💾 ローカル'}</span>
-                  </div>
-                  <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.55)', marginTop: 2 }}>
-                    {fmtDate(rec.ts)} ・ LV {d.level != null ? d.level : '-'} ・ 🪙 {d.gold != null ? d.gold : '-'}G
-                  </div>
+        {/* リスト本体 */}
+        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', display: 'flex', flexDirection: 'column', gap: 6, paddingRight: 2 }}>
+          {items.length === 0 && (
+            <div style={{ textAlign: 'center', color: 'rgba(255,255,255,0.7)', fontSize: 12, padding: 24, lineHeight: 1.9, background: 'rgba(8,16,26,0.7)', borderRadius: 10, border: '1px solid var(--border)' }}>
+              まだ回答履歴がありません。<br />ゲームを最後までプレイすると、ここに保存されます。
+            </div>
+          )}
+          {items.map((rec, idx) => {
+            const sel = recKey(rec) === selKey;
+            const d = rec.data || {};
+            return (
+              <div key={rec.ts + '_' + idx} onClick={() => setSelKey(recKey(rec))}
+                style={{ cursor: 'pointer', border: `1px solid ${sel ? 'var(--gold2)' : 'var(--border)'}`, borderRadius: 9, padding: '8px 10px',
+                  background: sel ? 'rgba(212,175,55,0.16)' : 'rgba(8,16,26,0.85)', boxShadow: sel ? '0 0 12px rgba(212,175,55,0.4)' : 'none', transition: 'all 0.12s' }}>
+                <div style={{ fontSize: 12, fontWeight: 900, color: '#fff', display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                  <span style={{ fontFamily: 'Orbitron', letterSpacing: 1 }}>SEED: {rec.seed}</span>
+                  {rec.ov ? <span style={{ fontSize: 9.5, color: 'var(--gold2)' }} title="設定変更あり">⚙️</span> : null}
+                  <span style={{ fontSize: 9, color: rec.fromServer ? '#7fd0ff' : 'rgba(255,255,255,0.5)', border: '1px solid rgba(255,255,255,0.25)', borderRadius: 4, padding: '0 4px' }}>{rec.fromServer ? '🌐' : '💾'}</span>
                 </div>
-                <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)', flexShrink: 0 }}>{isOpen ? '▲ 閉じる' : '▼ 見る'}</span>
+                <div style={{ fontSize: 9.5, color: 'rgba(255,255,255,0.55)', marginTop: 2 }}>
+                  {fmtDate(rec.ts)} ・ LV {d.level != null ? d.level : '-'} ・ 🪙 {d.gold != null ? d.gold : '-'}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {items.some(i => !i.fromServer) && (
+          <button className="menu-btn" style={{ flexShrink: 0, padding: '8px 12px', fontSize: 11, background: 'rgba(80,20,20,0.7)', color: '#fff', borderColor: 'var(--red)' }} onClick={removeAll}>🗑 ローカル分を全削除</button>
+        )}
+      </div>
+
+      {/* ══════════ 右カラム：盤面を大きく表示（結果画面と同じUI） ══════════ */}
+      <div style={{ flex: 1, minWidth: 0, height: '100%', overflowY: 'auto', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: selRec ? 'flex-start' : 'center', padding: '18px 16px', boxSizing: 'border-box' }}>
+        {!selRec ? (
+          <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: 14, textAlign: 'center', lineHeight: 2 }}>
+            ← 左のリストからシードを選ぶと<br />ここに盤面が大きく表示されます
+          </div>
+        ) : (() => {
+          const d = selRec.data || {};
+          return (
+            <div style={{ width: '100%', maxWidth: 580, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+              {/* SEED見出し */}
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontFamily: 'Orbitron', fontSize: 20, fontWeight: 900, color: '#fff', letterSpacing: 2, textShadow: '0 0 12px var(--gold)' }}>SEED: {selRec.seed}</div>
+                <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)', marginTop: 3 }}>
+                  {fmtDate(selRec.ts)}{selRec.ov ? ' ・⚙️設定変更あり' : ''} ・{selRec.fromServer ? '🌐 サーバー' : '💾 ローカル'}
+                </div>
               </div>
 
-              {/* 展開部：盤面・ベンチ・オーグメント・操作ボタン */}
-              {isOpen && (
-                <div style={{ padding: '10px 10px 14px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, background: 'rgba(0,0,0,0.35)', borderTop: '1px solid var(--border)' }}>
-                  {/* 盤面（狭い画面でもはみ出さないよう横スクロール可） */}
-                  <div style={{ maxWidth: '100%', overflowX: 'auto', padding: '0 2px' }}>
-                    <div style={{ width: 'fit-content', margin: '0 auto' }}>
-                    {[0, 1, 2, 3].map(row => (
-                      <div key={row} style={{ display: 'flex', gap: 1, marginLeft: row % 2 === 1 ? 26 : 0 }}>
-                        {[0, 1, 2, 3, 4, 5, 6].map(col => {
-                          const u = (d.board || []).find(x => x.pos === row * 7 + col);
-                          const c = u ? champById(u.id) : null;
-                          const champ = c ? { ...c, star: u.star, items: (u.itemNames || []).map(hydrateItemByName) } : null;
-                          return <HexCell key={col} champ={champ} size={52} itemSize={11} />;
-                        })}
-                      </div>
-                    ))}
-                    </div>
-                  </div>
-                  {/* ベンチ */}
-                  {(d.bench || []).length > 0 && (
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
-                      <div style={{ fontSize: 8.5, color: 'rgba(255,255,255,0.5)', fontFamily: 'Orbitron', letterSpacing: 1 }}>BENCH</div>
-                      <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', justifyContent: 'center' }}>
-                        {(d.bench || []).map((u, bi) => {
-                          const c = champById(u.id);
-                          return (
-                            <div key={bi} style={{ width: 34, height: 34, borderRadius: 6, overflow: 'hidden', border: `2px solid ${c ? COST_COLORS[c.cost] : 'var(--border)'}`, position: 'relative', background: '#000' }} title={`${'★'.repeat(u.star || 1)} ${u.jaName}`}>
-                              {c && <img src={boardIcon(c.img)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
-                              <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, textAlign: 'center', fontSize: 8, color: STAR_COLORS[u.star || 1], fontWeight: 900, background: 'rgba(0,0,0,0.6)', lineHeight: '10px' }}>{'★'.repeat(u.star || 1)}</div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                  {/* オーグメント（アイコン付き） */}
-                  {(d.augments || []).length > 0 && (
-                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center' }}>
-                      {(d.augments || []).map((a, ai) => {
-                        const meta = getAugmentMetaByName(a.name);
-                        return (
-                          <span key={ai} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10.5, fontWeight: 900, color: TIER_TXT[a.tier] || '#fff', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 8px', background: 'rgba(0,0,0,0.4)' }}>
-                            {(meta && meta.imgName)
-                              ? <img src={getAugmentIconUrl(meta)} style={{ width: 16, height: 16, borderRadius: 3, border: '1px solid rgba(148,163,184,0.5)', background: '#0b1622', flexShrink: 0 }} onError={(e) => e.target.style.display='none'} />
-                              : <span style={{ fontSize: 10, flexShrink: 0 }}>✨</span>}
-                            {a.name}
-                          </span>
-                        );
+              {/* LV・Gold */}
+              {(d.level != null || d.gold != null) && (
+                <div style={{ display: 'flex', gap: 14, fontSize: 13, fontWeight: 900 }}>
+                  {d.level != null && <span style={{ color: '#7fd0ff' }}>最終 LV {d.level}</span>}
+                  {d.gold != null && <span style={{ color: 'var(--gold2)' }}>🪙 {d.gold}G</span>}
+                </div>
+              )}
+
+              {/* 盤面（大きく） */}
+              <div style={{ maxWidth: '100%', overflowX: 'auto', padding: '0 2px' }}>
+                <div style={{ width: 'fit-content', margin: '0 auto' }}>
+                  {[0, 1, 2, 3].map(row => (
+                    <div key={row} style={{ display: 'flex', gap: 1, marginLeft: row % 2 === 1 ? 30 : 0 }}>
+                      {[0, 1, 2, 3, 4, 5, 6].map(col => {
+                        const u = (d.board || []).find(x => x.pos === row * 7 + col);
+                        const c = u ? champById(u.id) : null;
+                        const champ = c ? { ...c, star: u.star, items: (u.itemNames || []).map(hydrateItemByName) } : null;
+                        return <HexCell key={col} champ={champ} size={60} itemSize={13} />;
                       })}
                     </div>
-                  )}
-                  {/* 操作ボタン */}
-                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
-                    <button className="menu-btn" style={{ padding: '8px 14px', fontSize: 12, background: 'var(--teal)', color: '#fff', borderColor: 'var(--teal)' }}
-                      onClick={() => onPlay(rec)}>▶ このシードで再挑戦</button>
-                    <button className="menu-btn" style={{ padding: '8px 14px', fontSize: 12, background: 'var(--purple)', color: '#fff', borderColor: 'var(--purple)' }}
-                      onClick={() => openStats(rec)}>📊 みんなの結果</button>
-                    {!rec.fromServer && (
-                      <button className="menu-btn" style={{ padding: '8px 14px', fontSize: 12, background: 'rgba(80,20,20,0.7)', color: '#fff', borderColor: 'var(--red)' }}
-                        onClick={() => removeAt(rec)}>🗑 削除</button>
-                    )}
+                  ))}
+                </div>
+              </div>
+
+              {/* ベンチ */}
+              {(d.bench || []).length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                  <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.5)', fontFamily: 'Orbitron', letterSpacing: 1 }}>BENCH</div>
+                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: 'center' }}>
+                    {d.bench.map((u, k) => {
+                      const c = champById(u.id);
+                      return (
+                        <div key={k} style={{ width: 40, height: 40, borderRadius: 6, overflow: 'hidden', position: 'relative', border: `2px solid ${c ? COST_COLORS[c.cost] : 'var(--border)'}`, background: '#0b1622', flexShrink: 0 }} title={u.jaName}>
+                          {c && <img src={boardIcon(c.img)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
+                          <div style={{ position: 'absolute', bottom: -1, left: 0, right: 0, display: 'flex', justifyContent: 'center', transform: 'scale(0.55)', transformOrigin: 'bottom' }}><Stars star={u.star} /></div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}
+
+              {/* アイテム欄 */}
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.5)', fontFamily: 'Orbitron', letterSpacing: 1 }}>ITEMS</div>
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: 'center' }}>
+                  {(d.inventoryNames || []).length > 0 ? d.inventoryNames.map((n, k) => (
+                    <img key={k} src={getMetaTFTItemUrl(n)} title={resolveItemJa(n)} style={{ width: 26, height: 26, borderRadius: 4, border: '1px solid var(--gold)', background: '#1e293b', flexShrink: 0 }} onError={(e) => e.target.style.display = 'none'} />
+                  )) : <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)' }}>{d.inventoryNames ? 'なし' : '（この記録には未保存）'}</span>}
+                </div>
+              </div>
+
+              {/* オーグメント */}
+              {(d.augments || []).length > 0 && (
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center' }}>
+                  {d.augments.map((a, ai) => {
+                    const meta = getAugmentMetaByName(a.name);
+                    return (
+                      <span key={ai} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 900, color: TIER_TXT[a.tier] || '#fff', border: '1px solid var(--border)', borderRadius: 7, padding: '3px 9px', background: 'rgba(0,0,0,0.4)' }}>
+                        {(meta && meta.imgName)
+                          ? <img src={getAugmentIconUrl(meta)} style={{ width: 18, height: 18, borderRadius: 3, border: '1px solid rgba(148,163,184,0.5)', background: '#0b1622', flexShrink: 0 }} onError={(e) => e.target.style.display = 'none'} />
+                          : <span style={{ fontSize: 11, flexShrink: 0 }}>✨</span>}
+                        {a.name}
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* 操作ボタン */}
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center', marginTop: 4 }}>
+                <button className="menu-btn" style={{ padding: '9px 16px', fontSize: 12.5, background: 'var(--teal)', color: '#fff', borderColor: 'var(--teal)' }}
+                  onClick={() => onPlay(selRec)}>▶ このシードで再挑戦</button>
+                <button className="menu-btn" style={{ padding: '9px 16px', fontSize: 12.5, background: 'var(--purple)', color: '#fff', borderColor: 'var(--purple)' }}
+                  onClick={() => openStats(selRec)}>📊 みんなの結果</button>
+                {!selRec.fromServer && (
+                  <button className="menu-btn" style={{ padding: '9px 16px', fontSize: 12.5, background: 'rgba(80,20,20,0.7)', color: '#fff', borderColor: 'var(--red)' }}
+                    onClick={() => removeAt(selRec)}>🗑 削除</button>
+                )}
+              </div>
             </div>
           );
-        })}
+        })()}
       </div>
     </div>
   );
