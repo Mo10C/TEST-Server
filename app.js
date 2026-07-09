@@ -181,18 +181,40 @@ const SEED_STATS_LOCAL_KEY = 'tft_sim_seed_stats_v1';
 const getStatsPlayerName = () => { try { return localStorage.getItem('tft_sim_player_name') || ''; } catch (e) { return ''; } };
 const setStatsPlayerName = (v) => { try { localStorage.setItem('tft_sim_player_name', v || ''); } catch (e) {} };
 
+/* ── 🔑 「1シード・1ユーザー・1結果」用の決定論ドキュメントID ──
+   同じ uid × 同じ seed なら常に同じIDになるので、記録は毎回 PATCH で
+   「最新の結果」に上書きされる（同一シードでレコードが増え続けない）。
+   overridesHash は 32bit のため、seed 側と uid 側で別々に取った 2 本を
+   連結して実質 64bit にし、別人・別シードとの衝突を避ける。
+   riotId の # や seed の ~ など、ドキュメントIDに使えない文字も回避できる。 */
+function recordDocId(uid, seed) {
+  const h1 = overridesHash(`${uid}||${seed}`);
+  const h2 = overridesHash(`${seed}::${uid}::salt`);
+  return `R_${h1}_${h2}`;
+}
+
 async function submitSeedRecord(record) {
   // 常にローカルにも保存（共有未設定でも自分の統計が見られる）
   try {
     const arr = JSON.parse(localStorage.getItem(SEED_STATS_LOCAL_KEY) || '[]');
     const { replay, ...light } = record;   // 🎬 リプレイはローカルに残さない（容量保護。サーバーへのみ送る）
-    arr.push(light);
+    // 🔑 1シード・1ユーザー・1結果：同一 seed（かつ同一 uid）の記録は最新で置換
+    const i = arr.findIndex(r => r.seed === light.seed && (r.uid || '') === (light.uid || ''));
+    if (i >= 0) arr[i] = light; else arr.push(light);
     while (arr.length > 500) arr.shift();   // 容量保護
     localStorage.setItem(SEED_STATS_LOCAL_KEY, JSON.stringify(arr));
   } catch (e) {}
   if (!seedStatsShared()) return { shared: false };
   try {
-    const url = `https://firestore.googleapis.com/v1/projects/${SEED_STATS_CONFIG.projectId}/databases/(default)/documents/${SEED_STATS_CONFIG.collection}?key=${SEED_STATS_CONFIG.apiKey}`;
+    const base = `https://firestore.googleapis.com/v1/projects/${SEED_STATS_CONFIG.projectId}/databases/(default)/documents/${SEED_STATS_CONFIG.collection}`;
+    // 🔑 uid があれば決定論IDへ PATCH（同一 uid×seed は最新結果に上書き＝1件に集約）。
+    //    uid が無い記録（連携前フォールバック等）だけ従来どおり自動ID POST。
+    //    updateMask を付けない PATCH は body の内容でドキュメント全体を置換するため、
+    //    毎回フルのレコードを送っている本実装では「最新結果への完全上書き」になる。
+    const useUpsert = !!record.uid;
+    const url = useUpsert
+      ? `${base}/${recordDocId(record.uid, record.seed)}?key=${SEED_STATS_CONFIG.apiKey}`
+      : `${base}?key=${SEED_STATS_CONFIG.apiKey}`;
     const body = { fields: {
       seed:  { stringValue: record.seed },
       ts:    { integerValue: String(record.ts) },
@@ -204,7 +226,7 @@ async function submitSeedRecord(record) {
       player:{ stringValue: JSON.stringify(record.player || null) },
       data:  { stringValue: JSON.stringify(record.data) },
     } };
-    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const res = await fetch(url, { method: useUpsert ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     return { shared: res.ok };
   } catch (e) { return { shared: false, error: e.message }; }
 }
