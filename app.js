@@ -158,7 +158,8 @@ async function fetchMyRecords(uid) {
       const f = r.document.fields;
       let data = {}; try { data = JSON.parse((f.data && f.data.stringValue) || '{}'); } catch (e) {}
       let player = null; try { player = JSON.parse((f.player && f.player.stringValue) || 'null'); } catch (e) {}
-      return { seed: f.seed?.stringValue || '', ts: Number(f.ts?.integerValue || 0), user: f.user?.stringValue || '名無し', cheat: !!(f.cheat && f.cheat.booleanValue), ov: (f.ov && f.ov.stringValue) || '', player, data };
+      let replay = []; try { replay = JSON.parse((f.replay && f.replay.stringValue) || '[]'); } catch (e) {}   // 🎬 振り返り用
+      return { seed: f.seed?.stringValue || '', ts: Number(f.ts?.integerValue || 0), user: f.user?.stringValue || '名無し', cheat: !!(f.cheat && f.cheat.booleanValue), ov: (f.ov && f.ov.stringValue) || '', player, replay, data };
     });
     return { records, shared: true };
   } catch (e) {
@@ -3114,6 +3115,8 @@ function HistoryScreen({ account, onChangeAccount, onBack, onPlay }) {
   const [loading, setLoading] = useState(false);
   const [serverMode, setServerMode] = useState(false);  // 🌐 サーバー取得に成功したか
   const [errMsg, setErrMsg] = useState(null);
+  const [replayView, setReplayView] = useState(null); // 🎬 振り返り再生中 { frames, seed }
+  const [copiedKey, setCopiedKey] = useState(null);    // 🔗 共有URLコピー完了表示
   const [selKey, setSelKey] = useState(null);   // 📍 選択中の履歴（recKeyで保持。サーバーマージで順序が変わってもズレない）
   const [statsSeed, setStatsSeed] = useState(null);   // 📊 ドロワーで開く統計用シード
   const [gateOpen, setGateOpen] = useState(false);    // 🔐 アカウント連携ゲート
@@ -3135,6 +3138,7 @@ function HistoryScreen({ account, onChangeAccount, onBack, onPlay }) {
           ov: r.ov || '',
           ts: r.ts || 0,
           data: r.data || {},
+          replay: r.replay || [],   // 🎬 振り返り用（サーバー記録のみ持つ）
           fromServer: true,
         }));
         const map = new Map();
@@ -3189,6 +3193,20 @@ function HistoryScreen({ account, onChangeAccount, onBack, onPlay }) {
     setSelKey(null);
   };
 
+  // 🔗 共有URLを生成してクリップボードへコピー（ゲーム開始時と同じ ?seed=…&s=/&ov= 形式）
+  const copyShareUrl = (rec) => {
+    let query = `?seed=${rec.seed}`;
+    const ovCode = rec.ov || '';
+    if (ovCode && seedStatsShared()) { const code = overridesHash(ovCode); saveShareCode(ovCode); query += `&s=${code}`; }
+    else if (ovCode) { query += `&ov=${ovCode}`; }
+    const url = `${window.location.origin}${window.location.pathname}${query}`;
+    const done = () => { setCopiedKey(recKey(rec)); setTimeout(() => setCopiedKey(null), 1600); };
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(done).catch(() => window.prompt('共有URL', url));
+      else { window.prompt('共有URL', url); }
+    } catch (e) { window.prompt('共有URL', url); }
+  };
+
   const BG = `linear-gradient(rgba(0,0,0,0.75), rgba(0,0,0,0.75)), url("https://assets.st-note.com/production/uploads/images/263587712/rectangle_large_type_2_386d7257054746a6649e14bdb1432725.jpeg?width=4000&height=4000&fit=bounds&format=jpg&quality=90")`;
   const selRec = items.find(i => recKey(i) === selKey) || null;
 
@@ -3205,6 +3223,13 @@ function HistoryScreen({ account, onChangeAccount, onBack, onPlay }) {
 
       {/* 📊 みんなの結果ドロワー */}
       <SeedStatsDrawer seed={statsSeed || ''} open={!!statsSeed} onClose={() => setStatsSeed(null)} />
+
+      {/* 🎬 振り返り再生（サーバー記録に手順がある場合） */}
+      {replayView && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 9999 }}>
+          <ReplayViewer history={replayView.frames} seed={replayView.seed} onClose={() => setReplayView(null)} />
+        </div>
+      )}
 
       {/* ══════════ 左カラム：シード値のリスト ══════════ */}
       <div style={{ width: 'clamp(260px, 42%, 440px)', height: '100%', display: 'flex', flexDirection: 'column', gap: 10, padding: '14px 12px', boxSizing: 'border-box', borderRight: '1px solid rgba(255,255,255,0.15)', background: 'rgba(0,0,0,0.28)' }}>
@@ -3255,95 +3280,124 @@ function HistoryScreen({ account, onChangeAccount, onBack, onPlay }) {
         )}
       </div>
 
-      {/* ══════════ 右カラム：盤面を大きく表示（結果画面と同じUI） ══════════ */}
+      {/* ══════════ 右カラム：結果画面と同じレイアウトで表示 ══════════ */}
       <div style={{ flex: 1, minWidth: 0, height: '100%', overflowY: 'auto', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: selRec ? 'flex-start' : 'center', padding: '18px 16px', boxSizing: 'border-box' }}>
         {!selRec ? (
           <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: 14, textAlign: 'center', lineHeight: 2 }}>
-            ← 左のリストからシードを選ぶと<br />ここに盤面が大きく表示されます
+            ← 左のリストからシードを選ぶと<br />ここに結果が表示されます
           </div>
         ) : (() => {
           const d = selRec.data || {};
+          const inv = d.inventoryNames || [];
           return (
-            <div style={{ width: '100%', maxWidth: 580, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
-              {/* SEED見出し */}
-              <div style={{ textAlign: 'center' }}>
-                <div style={{ fontFamily: 'Orbitron', fontSize: 20, fontWeight: 900, color: '#fff', letterSpacing: 2, textShadow: '0 0 12px var(--gold)' }}>SEED: {selRec.seed}</div>
-                <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)', marginTop: 3 }}>
-                  {fmtDate(selRec.ts)}{selRec.ov ? ' ・⚙️設定変更あり' : ''} ・{selRec.fromServer ? '🌐 サーバー' : '💾 ローカル'}
-                </div>
-              </div>
-
-              {/* LV・Gold */}
-              {(d.level != null || d.gold != null) && (
-                <div style={{ display: 'flex', gap: 14, fontSize: 13, fontWeight: 900 }}>
-                  {d.level != null && <span style={{ color: '#7fd0ff' }}>最終 LV {d.level}</span>}
-                  {d.gold != null && <span style={{ color: 'var(--gold2)' }}>🪙 {d.gold}G</span>}
-                </div>
-              )}
-
-              {/* 盤面（大きく） */}
-              <div style={{ maxWidth: '100%', overflowX: 'auto', padding: '0 2px' }}>
-                <div style={{ width: 'fit-content', margin: '0 auto' }}>
-                  {[0, 1, 2, 3].map(row => (
-                    <div key={row} style={{ display: 'flex', gap: 1, marginLeft: row % 2 === 1 ? 30 : 0 }}>
-                      {[0, 1, 2, 3, 4, 5, 6].map(col => {
-                        const u = (d.board || []).find(x => x.pos === row * 7 + col);
-                        const c = u ? champById(u.id) : null;
-                        const champ = c ? { ...c, star: u.star, items: (u.itemNames || []).map(hydrateItemByName) } : null;
-                        return <HexCell key={col} champ={champ} size={60} itemSize={13} />;
-                      })}
+            <div style={{ width: '100%', maxWidth: 900, display: 'flex', flexDirection: 'column', gap: 14 }}>
+              {/* 結果カード（結果画面と同じライトなカード） */}
+              <div style={{ background: 'var(--bg0)', borderRadius: 16, border: '1px solid var(--border)', padding: 20, display: 'flex', flexDirection: 'column', gap: 18 }}>
+                {/* ヘッダー */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--border)', paddingBottom: 12, flexWrap: 'wrap', gap: 10 }}>
+                  <div style={{ fontFamily: 'Orbitron', fontSize: 10, color: 'var(--blue)', letterSpacing: 4 }}>TFT SET 17 — 1 STAGE RESULT</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontFamily: 'Orbitron' }}>
+                    {selRec.ov ? <span style={{ fontSize: 9.5, color: 'var(--gold2)', fontWeight: 900 }}>⚙️設定変更あり</span> : null}
+                    <span style={{ fontSize: 9, color: selRec.fromServer ? '#0088cc' : 'var(--textdim)', border: '1px solid var(--border)', borderRadius: 4, padding: '1px 5px' }}>{selRec.fromServer ? '🌐 サーバー' : '💾 ローカル'}</span>
+                    <div style={{ fontSize: 11, color: 'var(--textdim)', textAlign: 'right', borderLeft: '1px solid var(--border)', paddingLeft: 12 }}>
+                      <div>SEED</div>
+                      <div style={{ color: 'var(--text-main)', fontWeight: 900 }}>{selRec.seed}</div>
                     </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* ベンチ */}
-              {(d.bench || []).length > 0 && (
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-                  <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.5)', fontFamily: 'Orbitron', letterSpacing: 1 }}>BENCH</div>
-                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: 'center' }}>
-                    {d.bench.map((u, k) => {
-                      const c = champById(u.id);
-                      return (
-                        <div key={k} style={{ width: 40, height: 40, borderRadius: 6, overflow: 'hidden', position: 'relative', border: `2px solid ${c ? COST_COLORS[c.cost] : 'var(--border)'}`, background: '#0b1622', flexShrink: 0 }} title={u.jaName}>
-                          {c && <img src={boardIcon(c.img)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
-                          <div style={{ position: 'absolute', bottom: -1, left: 0, right: 0, display: 'flex', justifyContent: 'center', transform: 'scale(0.55)', transformOrigin: 'bottom' }}><Stars star={u.star} /></div>
-                        </div>
-                      );
-                    })}
                   </div>
                 </div>
-              )}
 
-              {/* アイテム欄 */}
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-                <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.5)', fontFamily: 'Orbitron', letterSpacing: 1 }}>ITEMS</div>
-                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: 'center' }}>
-                  {(d.inventoryNames || []).length > 0 ? d.inventoryNames.map((n, k) => (
-                    <img key={k} src={getMetaTFTItemUrl(n)} title={resolveItemJa(n)} style={{ width: 26, height: 26, borderRadius: 4, border: '1px solid var(--gold)', background: '#1e293b', flexShrink: 0 }} onError={(e) => e.target.style.display = 'none'} />
-                  )) : <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)' }}>{d.inventoryNames ? 'なし' : '（この記録には未保存）'}</span>}
+                {/* 本体2カラム */}
+                <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+                  {/* 左：LV/Gold + AUGMENT HISTORY */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10, width: 240, minWidth: 200, flexShrink: 0 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                      <div style={{ background: 'rgba(26,159,255,0.08)', border: '1px solid rgba(26,159,255,0.2)', borderRadius: 10, padding: '12px 14px' }}>
+                        <div style={{ fontSize: 9, color: 'var(--blue)', marginBottom: 4 }}>最終レベル</div>
+                        <div style={{ fontSize: 22, fontWeight: 900, color: 'var(--text-main)', fontFamily: 'Orbitron' }}>LV {d.level != null ? d.level : '-'}</div>
+                      </div>
+                      <div style={{ background: 'rgba(200,169,110,0.08)', border: '1px solid rgba(200,169,110,0.2)', borderRadius: 10, padding: '12px 14px' }}>
+                        <div style={{ fontSize: 9, color: 'var(--gold)', marginBottom: 4 }}>最終ゴールド</div>
+                        <div style={{ fontSize: 22, fontWeight: 900, color: 'var(--text-main)', fontFamily: 'Orbitron' }}>{d.gold != null ? d.gold : '-'}G</div>
+                      </div>
+                    </div>
+                    {/* AUGMENT HISTORY（履歴データは選んだオーグメントのみ持つので簡易表示） */}
+                    {(d.augments || []).length > 0 && (
+                      <div style={{ background: 'rgba(13,21,37,0.8)', border: '1px solid rgba(155,89,245,0.3)', borderRadius: 10, padding: '12px 14px' }}>
+                        <div style={{ fontSize: 9, color: 'var(--purple)', marginBottom: 10, fontWeight: 700, letterSpacing: 2 }}>AUGMENT HISTORY</div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                          {d.augments.map((a, ai) => {
+                            const meta = getAugmentMetaByName(a.name);
+                            return (
+                              <div key={ai} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(0,0,0,0.3)', padding: '8px 10px', borderRadius: 8, border: `1px solid ${(TIER_COLORS[a.tier] || 'var(--border)')}44` }}>
+                                {(meta && meta.imgName)
+                                  ? <img src={getAugmentIconUrl(meta)} style={{ width: 30, height: 30, borderRadius: 4, flexShrink: 0 }} onError={(e) => e.target.style.display = 'none'} />
+                                  : <span style={{ fontSize: 20, flexShrink: 0 }}>✨</span>}
+                                <div style={{ fontSize: 11, fontWeight: 900, color: TIER_TXT[a.tier] || '#fff', lineHeight: 1.25 }}>{a.name}</div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 右：ITEMS縦列 + 盤面 + BENCH */}
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'rgba(255,255,255,0.02)', borderRadius: 12, border: '1px solid var(--border)', padding: '20px 12px', minWidth: 320, gap: 14, overflowX: 'auto' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 16 }}>
+                      {/* ITEMS縦列 */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, background: 'rgba(0,0,0,0.3)', padding: '12px 10px', borderRadius: 10, border: '1px solid rgba(30,45,74,0.5)', alignItems: 'center', minHeight: 120, minWidth: 50, flexShrink: 0 }}>
+                        <div style={{ fontSize: 9, color: 'var(--gold)', fontFamily: 'Orbitron', letterSpacing: 1 }}>ITEMS</div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'center', maxHeight: 260, flexWrap: 'wrap', justifyContent: 'flex-start' }}>
+                          {inv.length > 0 ? inv.map((n, k) => (
+                            <div key={k} style={{ width: 28, height: 28, background: '#1e293b', borderRadius: 4, border: '1px solid var(--gold)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0 }}>
+                              <img src={getMetaTFTItemUrl(n)} title={resolveItemJa(n)} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 3 }} onError={(e) => e.target.style.display = 'none'} />
+                            </div>
+                          )) : <div style={{ fontSize: 10, color: 'var(--text)', padding: '6px 0' }}>なし</div>}
+                        </div>
+                      </div>
+                      {/* 盤面（主役・大きく） */}
+                      <div style={{ flexShrink: 0 }}>
+                        {[0, 1, 2, 3].map(row => (
+                          <div key={row} style={{ display: 'flex', gap: 2, marginLeft: row % 2 === 1 ? 30 : 0 }}>
+                            {[0, 1, 2, 3, 4, 5, 6].map(col => {
+                              const u = (d.board || []).find(x => x.pos === row * 7 + col);
+                              const c = u ? champById(u.id) : null;
+                              const champ = c ? { ...c, star: u.star, items: (u.itemNames || []).map(hydrateItemByName) } : null;
+                              return <HexCell key={col} champ={champ} size={58} itemSize={16} />;
+                            })}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    {/* BENCH */}
+                    {(d.bench || []).length > 0 && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, background: 'rgba(0,0,0,0.3)', padding: '8px 12px', borderRadius: 10, border: '1px solid rgba(30,45,74,0.5)', width: 'fit-content' }}>
+                        <div style={{ fontSize: 9, color: 'var(--textdim)', fontFamily: 'Orbitron', letterSpacing: 1, textAlign: 'center' }}>BENCH</div>
+                        <div style={{ display: 'flex', gap: 4 }}>
+                          {d.bench.map((u, k) => {
+                            const c = champById(u.id);
+                            return (
+                              <div key={k} style={{ width: 34, height: 34, borderRadius: 6, background: 'rgba(13,21,37,0.5)', border: `1px solid ${c ? COST_COLORS[c.cost] : 'rgba(30,45,74,.4)'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', overflow: 'hidden' }} title={u.jaName}>
+                                {c && <img src={boardIcon(c.img)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
+                                <div style={{ position: 'absolute', bottom: -1, left: 0, right: 0, display: 'flex', justifyContent: 'center', transform: 'scale(0.5)', transformOrigin: 'bottom' }}><Stars star={u.star} /></div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
 
-              {/* オーグメント */}
-              {(d.augments || []).length > 0 && (
-                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center' }}>
-                  {d.augments.map((a, ai) => {
-                    const meta = getAugmentMetaByName(a.name);
-                    return (
-                      <span key={ai} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 900, color: TIER_TXT[a.tier] || '#fff', border: '1px solid var(--border)', borderRadius: 7, padding: '3px 9px', background: 'rgba(0,0,0,0.4)' }}>
-                        {(meta && meta.imgName)
-                          ? <img src={getAugmentIconUrl(meta)} style={{ width: 18, height: 18, borderRadius: 3, border: '1px solid rgba(148,163,184,0.5)', background: '#0b1622', flexShrink: 0 }} onError={(e) => e.target.style.display = 'none'} />
-                          : <span style={{ fontSize: 11, flexShrink: 0 }}>✨</span>}
-                        {a.name}
-                      </span>
-                    );
-                  })}
-                </div>
-              )}
-
               {/* 操作ボタン */}
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center', marginTop: 4 }}>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center', paddingBottom: 12 }}>
+                {(selRec.replay || []).length > 0 && (
+                  <button className="menu-btn" style={{ padding: '9px 16px', fontSize: 12.5, background: 'var(--gold2)', color: '#08101a', borderColor: 'var(--gold2)' }}
+                    onClick={() => setReplayView({ frames: unpackReplayHistory(selRec.replay), seed: selRec.seed })}>🎬 振り返りを見る（{selRec.replay.length}コマ）</button>
+                )}
+                <button className="menu-btn" style={{ padding: '9px 16px', fontSize: 12.5, background: 'var(--blue)', color: '#fff', borderColor: 'var(--blue)' }}
+                  onClick={() => copyShareUrl(selRec)}>{copiedKey === recKey(selRec) ? '✓ コピーしました' : '🔗 共有URLをコピー'}</button>
                 <button className="menu-btn" style={{ padding: '9px 16px', fontSize: 12.5, background: 'var(--teal)', color: '#fff', borderColor: 'var(--teal)' }}
                   onClick={() => onPlay(selRec)}>▶ このシードで再挑戦</button>
                 <button className="menu-btn" style={{ padding: '9px 16px', fontSize: 12.5, background: 'var(--purple)', color: '#fff', borderColor: 'var(--purple)' }}
@@ -3853,6 +3907,11 @@ function App({ seed, onRestart, onNewGame, onHome = () => {}, keyBindings = DEFA
           .filter(it => it && it.type !== 'comp' && it.type !== 'consumable').map(it => it.name),
         // アイテム欄（手持ち）
         inventoryNames: inventory.filter(it => it && it.name).map(it => it.name),
+        // 🆕 結果画面と同じ上部チップ（遭遇・神・サイオニック・星の観測者）を履歴でも再現するため保存
+        enc: encounter ? encounter.id : null,
+        gods: encounterGods.map(g => g.id),
+        psionicNames: currentPsionicItems.map(p => p.name),
+        stargazerDesc: currentStargazerDesc,
       },
     };
   };
