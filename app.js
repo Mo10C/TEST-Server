@@ -3296,12 +3296,77 @@ function HistoryScreen({ account, onChangeAccount, onBack, onPlay }) {
                 {/* ヘッダー */}
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--border)', paddingBottom: 12, flexWrap: 'wrap', gap: 10 }}>
                   <div style={{ fontFamily: 'Orbitron', fontSize: 10, color: 'var(--blue)', letterSpacing: 4 }}>TFT SET 17 — 1 STAGE RESULT</div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontFamily: 'Orbitron' }}>
-                    {selRec.ov ? <span style={{ fontSize: 9.5, color: 'var(--gold2)', fontWeight: 900 }}>⚙️設定変更あり</span> : null}
-                    <span style={{ fontSize: 9, color: selRec.fromServer ? '#0088cc' : 'var(--textdim)', border: '1px solid var(--border)', borderRadius: 4, padding: '1px 5px' }}>{selRec.fromServer ? '🌐 サーバー' : '💾 ローカル'}</span>
-                    <div style={{ fontSize: 11, color: 'var(--textdim)', textAlign: 'right', borderLeft: '1px solid var(--border)', paddingLeft: 12 }}>
-                      <div>SEED</div>
-                      <div style={{ color: 'var(--text-main)', fontWeight: 900 }}>{selRec.seed}</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                    {/* 🆕 上部チップ：星の観測者 / サイオニック / 遭遇 / 神 */}
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                      {d.stargazerDesc && (() => {
+                        const sgName = (String(d.stargazerDesc).split('この試合: ')[1] || '').split('\n')[0];
+                        return sgName ? (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 5, background: '#c46bff22', border: '2px solid #c46bff', borderRadius: 9, padding: '3px 7px' }}>
+                            <div style={{ width: 24, height: 24, borderRadius: '50%', border: '2px solid #c46bff', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', background: '#4a148c', flexShrink: 0 }}>
+                              <img src={getTraitIconUrl('Stargazer')} style={{ width: 12, height: 12, filter: 'brightness(0) invert(1)' }} onError={(e) => e.target.style.display = 'none'} />
+                            </div>
+                            <div>
+                              <div style={{ fontSize: 7.5, color: 'var(--textdim)' }}>星の観測者</div>
+                              <div style={{ fontSize: 9.5, fontWeight: 900, color: '#c46bff', lineHeight: 1.2, whiteSpace: 'nowrap' }}>{sgName}</div>
+                            </div>
+                          </div>
+                        ) : null;
+                      })()}
+                      {(d.psionicNames || []).length >= 2 && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 5, background: '#4caf5022', border: '2px solid #4caf50', borderRadius: 9, padding: '3px 7px' }}>
+                          <div style={{ width: 24, height: 24, borderRadius: '50%', border: '2px solid #4caf50', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', background: '#1b5e20', flexShrink: 0 }}>
+                            <img src={getTraitIconUrl('Psionic')} style={{ width: 12, height: 12, filter: 'brightness(0) invert(1)' }} onError={(e) => e.target.style.display = 'none'} />
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 7.5, color: 'var(--textdim)' }}>サイオニック</div>
+                            <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
+                              <img src={getMetaTFTItemUrl(d.psionicNames[0])} style={{ width: 13, height: 13, borderRadius: 2 }} onError={(e) => e.target.style.display = 'none'} />
+                              <img src={getMetaTFTItemUrl(d.psionicNames[1])} style={{ width: 13, height: 13, borderRadius: 2 }} onError={(e) => e.target.style.display = 'none'} />
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                      {d.enc && (() => {
+                        const enc = (typeof ENCOUNTERS !== 'undefined' ? ENCOUNTERS : []).find(e => e.id === d.enc);
+                        if (!enc) return null;
+                        let encChamp = CHAMPS.find(c => c.id === enc.id);
+                        if (!encChamp) { const map = { miipsy: 'meepsie', velkoz: 'belveth', rastt: 'rhaast' }; if (map[enc.id]) encChamp = CHAMPS.find(c => c.id === map[enc.id]); }
+                        if (!encChamp) encChamp = CHAMPS.find(c => c.jaName.replace(/[・=]/g, '') === enc.champ.replace(/[・=]/g, ''));
+                        return (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 5, background: `${enc.color}22`, border: `2px solid ${enc.color}`, borderRadius: 9, padding: '3px 7px' }}>
+                            <div style={{ width: 24, height: 24, borderRadius: '50%', border: `2px solid ${enc.color}`, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', background: `${enc.color}22`, flexShrink: 0 }}>
+                              {encChamp ? <img src={boardIcon(encChamp.img)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <span style={{ fontSize: 13 }}>{enc.icon}</span>}
+                            </div>
+                            <div>
+                              <div style={{ fontSize: 7.5, color: 'var(--textdim)' }}>遭遇</div>
+                              <div style={{ fontSize: enc.champ.length > 8 ? 8.5 : 9.5, fontWeight: 900, color: enc.color, lineHeight: 1.2, whiteSpace: 'nowrap' }}>{enc.champ}</div>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                      {(d.gods || []).map(gid => {
+                        const god = (typeof GOD_DATA !== 'undefined' ? GOD_DATA : []).find(g => g.id === gid);
+                        if (!god) return null;
+                        return (
+                          <div key={gid} style={{ display: 'flex', alignItems: 'center', gap: 5, background: `${god.color}22`, border: `2px solid ${god.color}`, borderRadius: 9, padding: '3px 7px' }}>
+                            <GodImg god={god} type="icon" style={{ width: 24, height: 24, borderRadius: '50%', border: `2px solid ${god.color}`, objectFit: 'cover', background: 'white', flexShrink: 0 }} />
+                            <div>
+                              <div style={{ fontSize: 7.5, color: 'var(--textdim)' }}>遭遇した神</div>
+                              <div style={{ fontSize: String(god.name).replace('\n', ' ').length > 8 ? 8.5 : 9.5, fontWeight: 900, color: god.color, lineHeight: 1.2, whiteSpace: 'nowrap' }}>{String(god.name).replace('\n', ' ')}</div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {/* 設定 / 取得元 / SEED */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'Orbitron' }}>
+                      {selRec.ov ? <span style={{ fontSize: 9.5, color: 'var(--gold2)', fontWeight: 900 }} title="設定変更あり">⚙️</span> : null}
+                      <span style={{ fontSize: 9, color: selRec.fromServer ? '#0088cc' : 'var(--textdim)', border: '1px solid var(--border)', borderRadius: 4, padding: '1px 5px' }}>{selRec.fromServer ? '🌐' : '💾'}</span>
+                      <div style={{ fontSize: 11, color: 'var(--textdim)', textAlign: 'right', borderLeft: '1px solid var(--border)', paddingLeft: 10 }}>
+                        <div>SEED</div>
+                        <div style={{ color: 'var(--text-main)', fontWeight: 900 }}>{selRec.seed}</div>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -3320,22 +3385,52 @@ function HistoryScreen({ account, onChangeAccount, onBack, onPlay }) {
                         <div style={{ fontSize: 22, fontWeight: 900, color: 'var(--text-main)', fontFamily: 'Orbitron' }}>{d.gold != null ? d.gold : '-'}G</div>
                       </div>
                     </div>
-                    {/* AUGMENT HISTORY（履歴データは選んだオーグメントのみ持つので簡易表示） */}
+                    {/* AUGMENT HISTORY（history があれば結果画面と同じ3枠表示・無い古い記録は簡易表示） */}
                     {(d.augments || []).length > 0 && (
                       <div style={{ background: 'rgba(13,21,37,0.8)', border: '1px solid rgba(155,89,245,0.3)', borderRadius: 10, padding: '12px 14px' }}>
                         <div style={{ fontSize: 9, color: 'var(--purple)', marginBottom: 10, fontWeight: 700, letterSpacing: 2 }}>AUGMENT HISTORY</div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                          {d.augments.map((a, ai) => {
-                            const meta = getAugmentMetaByName(a.name);
-                            return (
-                              <div key={ai} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(0,0,0,0.3)', padding: '8px 10px', borderRadius: 8, border: `1px solid ${(TIER_COLORS[a.tier] || 'var(--border)')}44` }}>
-                                {(meta && meta.imgName)
-                                  ? <img src={getAugmentIconUrl(meta)} style={{ width: 30, height: 30, borderRadius: 4, flexShrink: 0 }} onError={(e) => e.target.style.display = 'none'} />
-                                  : <span style={{ fontSize: 20, flexShrink: 0 }}>✨</span>}
-                                <div style={{ fontSize: 11, fontWeight: 900, color: TIER_TXT[a.tier] || '#fff', lineHeight: 1.25 }}>{a.name}</div>
-                              </div>
-                            );
-                          })}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                          {d.augments.map((a, ai) => (
+                            <div key={ai} style={{ display: 'flex', flexDirection: 'column', gap: 6, background: 'rgba(0,0,0,0.3)', padding: '10px 8px', borderRadius: 8, border: `1px solid ${(TIER_COLORS[a.tier] || 'var(--border)')}44` }}>
+                              {a.history ? (
+                                <div style={{ display: 'flex', gap: 6, justifyContent: 'space-between' }}>
+                                  {[0, 1, 2].map(slotIdx => {
+                                    const initAug = a.history.initialChoices?.[slotIdx];
+                                    const finalAug = a.history.finalChoices?.[slotIdx];
+                                    const isRerolled = a.history.rerolledSlots?.[slotIdx];
+                                    const isPicked = finalAug?.id === a.id;
+                                    if (!finalAug) return null;
+                                    return (
+                                      <div key={slotIdx} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, opacity: isPicked ? 1 : 0.5, background: isPicked ? 'rgba(255,255,255,0.05)' : 'transparent', border: isPicked ? `1px solid ${TIER_COLORS[a.tier]}` : '1px dashed rgba(255,255,255,0.1)', borderRadius: 6, padding: '8px 2px', position: 'relative' }}>
+                                        {isRerolled && initAug && (
+                                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, width: '100%', marginBottom: 4 }}>
+                                            <img src={getAugmentIconUrl(initAug)} style={{ width: 22, height: 22, filter: 'grayscale(0.8)', opacity: 0.6 }} onError={(e) => e.target.style.display = 'none'} />
+                                            <div style={{ fontSize: (initAug.name || '').length > 9 ? 7 : 9, color: 'var(--textdim)', textAlign: 'center', lineHeight: 1.1, textDecoration: 'line-through', padding: '0 2px', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{initAug.name}</div>
+                                            <div style={{ fontSize: 10, color: 'var(--blue)', lineHeight: 1, marginTop: 2 }}>▼</div>
+                                          </div>
+                                        )}
+                                        <img src={getAugmentIconUrl(finalAug)} style={{ width: 28, height: 28, filter: isPicked ? 'none' : 'grayscale(0.5)' }} onError={(e) => e.target.style.display = 'none'} />
+                                        <div style={{ fontSize: (finalAug.name || '').length > 9 ? 8 : 10, color: isPicked ? 'white' : 'var(--textdim)', textAlign: 'center', lineHeight: 1.1, wordBreak: 'break-all', padding: '0 2px', fontWeight: isPicked ? 900 : 400, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{finalAug.name}</div>
+                                        {isPicked && (
+                                          <div style={{ position: 'absolute', top: -6, right: -6, background: 'var(--blue)', border: '1px solid var(--bg0)', borderRadius: '50%', width: 14, height: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, color: 'white', fontWeight: 900 }}>✓</div>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              ) : (() => {
+                                const meta = getAugmentMetaByName(a.name);
+                                return (
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    {(meta && meta.imgName)
+                                      ? <img src={getAugmentIconUrl(meta)} style={{ width: 30, height: 30, borderRadius: 4, flexShrink: 0 }} onError={(e) => e.target.style.display = 'none'} />
+                                      : <span style={{ fontSize: 20, flexShrink: 0 }}>✨</span>}
+                                    <div style={{ fontSize: 11, fontWeight: 900, color: TIER_TXT[a.tier] || '#fff', lineHeight: 1.25 }}>{a.name}</div>
+                                  </div>
+                                );
+                              })()}
+                            </div>
+                          ))}
                         </div>
                       </div>
                     )}
@@ -3889,6 +3984,13 @@ function App({ seed, onRestart, onNewGame, onHome = () => {}, keyBindings = DEFA
     const pickBoard = (arr) => arr.map((u, pos) => (u && !u.isAnvil) ? { id: u.id, jaName: u.jaName, star: u.star || 1, pos,
       itemNames: (u.items || []).map(it => it && it.name).filter(Boolean) } : null).filter(Boolean);
     const pickUnits = (arr) => arr.filter(u => u && !u.isAnvil).map(u => ({ id: u.id, jaName: u.jaName, star: u.star || 1 }));
+    // 🆕 オーグメント選択履歴（結果画面のAUGMENT HISTORYを履歴でも再現）。effect関数等を落として圧縮。
+    const slimAug = (x) => x ? { id: x.id, name: x.name, imgName: x.imgName, tier: x.tier } : null;
+    const slimAugHistory = (h) => h ? {
+      initialChoices: (h.initialChoices || []).map(slimAug),
+      finalChoices: (h.finalChoices || []).map(slimAug),
+      rerolledSlots: h.rerolledSlots || [],
+    } : null;
     return {
       seed: statSeed, ts: finishedTsRef.current || Date.now(),   // 🔗 設定変更ありなら「seed~設定ハッシュ」で別枠保存
       user: (acctPlayer && acctPlayer.name) || getStatsPlayerName() || '名無し',
@@ -3899,7 +4001,7 @@ function App({ seed, onRestart, onNewGame, onHome = () => {}, keyBindings = DEFA
       replay: packReplayHistory(historyRef.current),   // 🎬 手順つきリプレイ（圧縮）
       data: {
         level, gold,
-        augments: augments.map(a => ({ name: a.name, tier: a.tier })),
+        augments: augments.map(a => ({ id: a.id, name: a.name, tier: a.tier, history: slimAugHistory(a.history) })),
         board: pickBoard(board),
         bench: pickUnits(bench),
         // 盤面ユニットに装備中の完成系アイテム（素材・消耗品を除く）
